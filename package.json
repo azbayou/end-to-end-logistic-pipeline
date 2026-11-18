@@ -1,0 +1,19 @@
+{
+  "name": "logistic-performance-xpress-gas",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Google Apps Script Operations & Dashboard Suite with local Node VM GAS emulator and Playwright E2E suite",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test:unit": "node --test test/unit/*.test.js",
+    "test:e2e": "node test/e2e/run.mjs",
+    "test": "npm run test:unit && npm run test:e2e",
+    "dev": "node test/gas-mock/devServer.js"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.65.1"
+  }
+}

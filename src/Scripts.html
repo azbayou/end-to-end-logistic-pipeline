@@ -1,0 +1,1277 @@
+<script>
+(function () {
+  'use strict';
+
+  var CHART_COLORS = ['#2563eb', '#0ea5e9', '#6366f1', '#10b981', '#ef4444', '#f59e0b'];
+  var STATUS_COLORS = {
+    'Pending Pickup': '#f59e0b',
+    'Transit': '#3b82f6',
+    'On Shipment': '#6366f1',
+    'Delivered': '#10b981',
+    'Returned': '#ef4444'
+  };
+
+  var state = {
+    currentView: (window.__APP_INIT__ && window.__APP_INIT__.initialView) || 'dashboard',
+    sortTab: 'ready',
+    hubVolumeScope: 'current',
+    todayYmd: '',
+    dashboard: null,
+    orders: [],
+    shippers: [],
+    hubs: {
+      'HUB-JKT': 'Jakarta Central Hub',
+      'HUB-BDG': 'Bandung West Hub',
+      'HUB-SUB': 'Surabaya East Hub'
+    },
+    opLogs: [],
+    selectedPickup: new Set(),
+    selectedSort: new Set(),
+    selectedDelivery: new Set(),
+    pendingCrossHubPayload: null,
+    autoRefreshTimer: null
+  };
+
+  function $(id) {
+    return document.getElementById(id);
+  }
+
+  function escapeHtml(val) {
+    if (val === null || val === undefined) return '';
+    return String(val)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function formatNumber(n) {
+    var num = Number(n);
+    if (!isFinite(num)) return '0';
+    return num.toLocaleString('en-US');
+  }
+
+  function showToast(message, type) {
+    var container = $('toast-container');
+    if (!container) return;
+    container.innerHTML = '';
+    var el = document.createElement('div');
+    el.className = 'toast toast-' + (type || 'info');
+    el.setAttribute('role', type === 'error' ? 'alert' : 'status');
+    el.textContent = String(message || '');
+    container.appendChild(el);
+    setTimeout(function () {
+      if (el.parentNode) {
+        el.parentNode.removeChild(el);
+      }
+    }, 5500);
+  }
+
+  function showGlobalError(msg) {
+    var banner = $('global-error-banner');
+    if (!banner) return;
+    if (!msg) {
+      banner.classList.add('hidden');
+      banner.textContent = '';
+    } else {
+      banner.textContent = String(msg);
+      banner.classList.remove('hidden');
+    }
+  }
+
+  function callGas(fnName, args) {
+    return new Promise(function (resolve, reject) {
+      if (!window.google || !window.google.script || !window.google.script.run) {
+        reject(new Error('google.script.run is unavailable.'));
+        return;
+      }
+      var runner = window.google.script.run
+        .withSuccessHandler(function (res) {
+          resolve(res);
+        })
+        .withFailureHandler(function (err) {
+          reject(err instanceof Error ? err : new Error(String(err && err.message ? err.message : err)));
+        });
+      runner[fnName].apply(runner, args || []);
+    });
+  }
+
+  function statusBadge(status, returnFlag) {
+    var cls = 'badge-pending';
+    if (status === 'Transit') cls = 'badge-transit';
+    else if (status === 'On Shipment') cls = 'badge-shipment';
+    else if (status === 'Delivered') cls = 'badge-delivered';
+    else if (status === 'Returned') cls = 'badge-returned';
+    var html = '<span class="badge ' + cls + '">' + escapeHtml(status) + '</span>';
+    if (Number(returnFlag) === 1 && status !== 'Returned') {
+      html += '<span class="badge badge-rts">RTS</span>';
+    }
+    return html;
+  }
+
+  function slaBadge(agingType, agingDays) {
+    var cls = 'badge-not-inbounded';
+    if (agingType === 'Under SLA') cls = 'badge-under-sla';
+    else if (agingType === 'Over SLA') cls = 'badge-over-sla';
+    var suffix = agingDays !== null && agingDays !== undefined ? ' (' + agingDays + 'd)' : '';
+    return '<span class="badge ' + cls + '">' + escapeHtml(agingType || 'Not Inbounded') + suffix + '</span>';
+  }
+
+  function updateNavCounts() {
+    var pickupCount = 0;
+    var sortCount = 0;
+    var deliveryCount = 0;
+    for (var i = 0; i < state.orders.length; i++) {
+      var o = state.orders[i];
+      if (o.status === 'Pending Pickup') pickupCount += 1;
+      else if (o.status === 'Transit') {
+        sortCount += 1;
+        if (Number(o.return_flag) === 1) deliveryCount += 1;
+      } else if (o.status === 'On Shipment') {
+        deliveryCount += 1;
+      }
+    }
+    if ($('nav-count-pickup')) $('nav-count-pickup').textContent = String(pickupCount);
+    if ($('nav-count-sort')) $('nav-count-sort').textContent = String(sortCount);
+    if ($('nav-count-delivery')) $('nav-count-delivery').textContent = String(deliveryCount);
+  }
+
+  function setActiveView(viewKey, pushHistory) {
+    var valid = ['dashboard', 'input', 'pickup', 'sort', 'delivery'];
+    var next = valid.indexOf(viewKey) !== -1 ? viewKey : 'dashboard';
+    state.currentView = next;
+
+    for (var i = 0; i < valid.length; i++) {
+      var k = valid[i];
+      var sec = $('view-' + k);
+      var btn = $('nav-' + k);
+      if (sec) sec.classList.toggle('hidden', k !== next);
+      if (btn) btn.classList.toggle('active', k === next);
+    }
+
+    renderCurrentView();
+  }
+
+  function populateShipperDropdowns() {
+    var filterSel = $('filter-shipper');
+    var inputSel = $('input-shipper-id');
+    var prevFilter = filterSel ? filterSel.value : '';
+    var prevInput = inputSel ? inputSel.value : '';
+
+    if (filterSel) {
+      filterSel.innerHTML = '<option value="">All Shippers</option>';
+      state.shippers.forEach(function (s) {
+        var opt = document.createElement('option');
+        opt.value = s.shipper_id;
+        opt.textContent = s.shipper_id + ' — ' + s.shipper_name;
+        filterSel.appendChild(opt);
+      });
+      if (prevFilter) filterSel.value = prevFilter;
+    }
+
+    if (inputSel) {
+      inputSel.innerHTML = '<option value="">-- Select Shipper --</option>';
+      state.shippers.forEach(function (s) {
+        var opt2 = document.createElement('option');
+        opt2.value = s.shipper_id;
+        opt2.textContent = s.shipper_id + ' — ' + s.shipper_name;
+        inputSel.appendChild(opt2);
+      });
+      if (prevInput) inputSel.value = prevInput;
+      updatePickupAddressPreview();
+    }
+  }
+
+  function updatePickupAddressPreview() {
+    var sel = $('input-shipper-id');
+    var box = $('input-pickup-preview');
+    if (!sel || !box) return;
+    var sid = sel.value;
+    if (!sid) {
+      box.textContent = 'Select a shipper to preview pickup address.';
+      return;
+    }
+    var found = null;
+    for (var i = 0; i < state.shippers.length; i++) {
+      if (state.shippers[i].shipper_id === sid) {
+        found = state.shippers[i];
+        break;
+      }
+    }
+    box.textContent = found
+      ? found.shipper_name + ' — ' + (found.pickup_address || 'No pickup address')
+      : 'Shipper selected.';
+  }
+
+  function getDashboardFilters() {
+    return {
+      dateFrom: $('filter-date-from') ? $('filter-date-from').value : '',
+      dateTo: $('filter-date-to') ? $('filter-date-to').value : '',
+      hub: $('filter-hub') ? $('filter-hub').value : '',
+      hubScope: 'either',
+      status: $('filter-status') ? $('filter-status').value : '',
+      shipperId: $('filter-shipper') ? $('filter-shipper').value : '',
+      slaType: $('filter-sla') ? $('filter-sla').value : '',
+      search: $('filter-search') ? $('filter-search').value.trim() : ''
+    };
+  }
+
+  function renderDonutChart(containerId, items, labelKey, valueKey, colorFn) {
+    var container = $(containerId);
+    if (!container) return;
+    var total = 0;
+    for (var i = 0; i < items.length; i++) {
+      total += Number(items[i][valueKey] || 0);
+    }
+    var cx = 85;
+    var cy = 85;
+    var r = 62;
+    var ir = 36;
+    var paths = '';
+
+    if (total === 0) {
+      paths += '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="#e2e8f0"></circle>';
+      paths += '<circle cx="' + cx + '" cy="' + cy + '" r="' + ir + '" fill="#ffffff"></circle>';
+    } else {
+      var startAngle = -Math.PI / 2;
+      for (var j = 0; j < items.length; j++) {
+        var val = Number(items[j][valueKey] || 0);
+        if (val <= 0) continue;
+        var angle = (val / total) * Math.PI * 2;
+        var color = colorFn(items[j], j);
+        if (angle >= Math.PI * 2 - 0.0001) {
+          paths += '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="' + color + '"><title>' +
+            escapeHtml(items[j][labelKey]) + ': ' + val + '</title></circle>';
+        } else {
+          var endAngle = startAngle + angle;
+          var x1 = cx + r * Math.cos(startAngle);
+          var y1 = cy + r * Math.sin(startAngle);
+          var x2 = cx + r * Math.cos(endAngle);
+          var y2 = cy + r * Math.sin(endAngle);
+          var largeArc = angle > Math.PI ? 1 : 0;
+          paths += '<path d="M ' + cx + ' ' + cy + ' L ' + x1.toFixed(2) + ' ' + y1.toFixed(2) +
+            ' A ' + r + ' ' + r + ' 0 ' + largeArc + ' 1 ' + x2.toFixed(2) + ' ' + y2.toFixed(2) +
+            ' Z" fill="' + color + '"><title>' + escapeHtml(items[j][labelKey]) + ': ' + val + '</title></path>';
+          startAngle = endAngle;
+        }
+      }
+      paths += '<circle cx="' + cx + '" cy="' + cy + '" r="' + ir + '" fill="#ffffff"></circle>';
+    }
+
+    paths += '<text x="' + cx + '" y="' + (cy - 2) + '" text-anchor="middle" font-size="16" font-weight="800" fill="#0f172a">' +
+      formatNumber(total) + '</text>';
+    paths += '<text x="' + cx + '" y="' + (cy + 14) + '" text-anchor="middle" font-size="10" fill="#64748b">Orders</text>';
+
+    var legendHtml = '<div class="chart-legend">';
+    for (var k = 0; k < items.length; k++) {
+      var cVal = Number(items[k][valueKey] || 0);
+      var pct = total === 0 ? '0.0' : ((cVal / total) * 100).toFixed(1);
+      legendHtml += '<span class="legend-item"><span class="legend-dot" style="background:' +
+        colorFn(items[k], k) + '"></span>' + escapeHtml(items[k][labelKey]) + ': <strong>' +
+        formatNumber(cVal) + '</strong> (' + pct + '%)</span>';
+    }
+    legendHtml += '</div>';
+
+    container.innerHTML =
+      '<svg viewBox="0 0 170 170" style="max-height:175px;margin:0 auto;">' + paths + '</svg>' + legendHtml;
+  }
+
+  function renderVerticalBarChart(containerId, items, labelKey, valueKey, color) {
+    var container = $(containerId);
+    if (!container) return;
+    var maxVal = 1;
+    for (var i = 0; i < items.length; i++) {
+      var v = Number(items[i][valueKey] || 0);
+      if (v > maxVal) maxVal = v;
+    }
+
+    var w = 360;
+    var h = 175;
+    var padL = 24;
+    var padR = 16;
+    var padT = 22;
+    var padB = 34;
+    var plotW = w - padL - padR;
+    var plotH = h - padT - padB;
+    var count = Math.max(items.length, 1);
+    var slotW = plotW / count;
+    var barW = Math.min(48, slotW * 0.56);
+
+    var svg = '<line x1="' + padL + '" y1="' + (padT + plotH) + '" x2="' + (w - padR) + '" y2="' + (padT + plotH) + '" stroke="#cbd5e1" stroke-width="1"/>';
+    var legend = '<div class="chart-legend">';
+
+    for (var j = 0; j < items.length; j++) {
+      var val = Number(items[j][valueKey] || 0);
+      var bh = maxVal === 0 ? 0 : (val / maxVal) * plotH;
+      var x = padL + j * slotW + (slotW - barW) / 2;
+      var y = padT + plotH - bh;
+      var fill = typeof color === 'function' ? color(items[j], j) : color;
+      svg += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + bh.toFixed(1) +
+        '" rx="4" fill="' + fill + '"><title>' + escapeHtml(items[j][labelKey]) + ': ' + val + '</title></rect>';
+      svg += '<text x="' + (x + barW / 2).toFixed(1) + '" y="' + Math.max(12, y - 5).toFixed(1) +
+        '" text-anchor="middle" font-size="11" font-weight="700" fill="#0f172a">' + val + '</text>';
+      svg += '<text x="' + (x + barW / 2).toFixed(1) + '" y="' + (padT + plotH + 16) +
+        '" text-anchor="middle" font-size="10" fill="#475569">' + escapeHtml(items[j].hub || items[j][labelKey]) + '</text>';
+      legend += '<span class="legend-item"><span class="legend-dot" style="background:' + fill + '"></span>' +
+        escapeHtml(items[j][labelKey]) + ': <strong>' + formatNumber(val) + '</strong></span>';
+    }
+    legend += '</div>';
+
+    container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '">' + svg + '</svg>' + legend;
+  }
+
+  function renderHorizontalBarChart(containerId, items, labelKey, valueKey) {
+    var container = $(containerId);
+    if (!container) return;
+    var maxVal = 1;
+    for (var i = 0; i < items.length; i++) {
+      var v = Number(items[i][valueKey] || 0);
+      if (v > maxVal) maxVal = v;
+    }
+
+    var rowH = 34;
+    var w = 360;
+    var h = Math.max(110, items.length * rowH + 16);
+    var labelW = 135;
+    var barMaxW = 165;
+    var svg = '';
+
+    for (var j = 0; j < items.length; j++) {
+      var item = items[j];
+      var val = Number(item[valueKey] || 0);
+      var bw = maxVal === 0 ? 0 : (val / maxVal) * barMaxW;
+      var y = 12 + j * rowH;
+      var color = CHART_COLORS[j % CHART_COLORS.length];
+      svg += '<text x="4" y="' + (y + 15) + '" font-size="11" font-weight="600" fill="#334155">' +
+        escapeHtml(String(item[labelKey]).slice(0, 20)) + '</text>';
+      svg += '<rect x="' + labelW + '" y="' + (y + 3) + '" width="' + barMaxW + '" height="16" rx="4" fill="#f1f5f9"></rect>';
+      svg += '<rect x="' + labelW + '" y="' + (y + 3) + '" width="' + bw.toFixed(1) + '" height="16" rx="4" fill="' + color +
+        '"><title>' + escapeHtml(item[labelKey]) + ': ' + val + '</title></rect>';
+      svg += '<text x="' + (labelW + barMaxW + 8) + '" y="' + (y + 15) + '" font-size="11" font-weight="700" fill="#0f172a">' +
+        formatNumber(val) + '</text>';
+    }
+
+    container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '">' + svg + '</svg>';
+  }
+
+  function renderStackedReturnChart(containerId, items, labelKey, shortKey) {
+    var container = $(containerId);
+    if (!container) return;
+    var maxVal = 1;
+    for (var i = 0; i < items.length; i++) {
+      var t = Number(items[i].total || 0);
+      if (t > maxVal) maxVal = t;
+    }
+
+    var w = 360;
+    var h = 175;
+    var padL = 20;
+    var padR = 16;
+    var padT = 22;
+    var padB = 34;
+    var plotW = w - padL - padR;
+    var plotH = h - padT - padB;
+    var count = Math.max(items.length, 1);
+    var slotW = plotW / count;
+    var barW = Math.min(44, slotW * 0.56);
+
+    var svg = '<line x1="' + padL + '" y1="' + (padT + plotH) + '" x2="' + (w - padR) + '" y2="' + (padT + plotH) + '" stroke="#cbd5e1" stroke-width="1"/>';
+    var legend = '<div class="chart-legend">' +
+      '<span class="legend-item"><span class="legend-dot" style="background:#3b82f6"></span>Normal</span>' +
+      '<span class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>Return Flagged</span>';
+
+    for (var j = 0; j < items.length; j++) {
+      var it = items[j];
+      var normH = maxVal === 0 ? 0 : (Number(it.normal || 0) / maxVal) * plotH;
+      var retH = maxVal === 0 ? 0 : (Number(it.returned || 0) / maxVal) * plotH;
+      var x = padL + j * slotW + (slotW - barW) / 2;
+      var yNorm = padT + plotH - normH;
+      var yRet = yNorm - retH;
+
+      svg += '<rect x="' + x.toFixed(1) + '" y="' + yNorm.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + normH.toFixed(1) + '" fill="#3b82f6"></rect>';
+      svg += '<rect x="' + x.toFixed(1) + '" y="' + yRet.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + retH.toFixed(1) + '" fill="#ef4444"></rect>';
+      svg += '<text x="' + (x + barW / 2).toFixed(1) + '" y="' + Math.max(12, yRet - 5).toFixed(1) +
+        '" text-anchor="middle" font-size="10" font-weight="700" fill="#991b1b">' + Number(it.returnRate || 0).toFixed(1) + '%</text>';
+      svg += '<text x="' + (x + barW / 2).toFixed(1) + '" y="' + (padT + plotH + 16) +
+        '" text-anchor="middle" font-size="10" fill="#475569">' + escapeHtml(it[shortKey] || it[labelKey]) + '</text>';
+      legend += '<span class="legend-item">' + escapeHtml(it[labelKey]) + ': <strong>' + Number(it.returnRate || 0).toFixed(1) + '%</strong></span>';
+    }
+    legend += '</div>';
+
+    container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '">' + svg + '</svg>' + legend;
+  }
+
+  function renderSlaByHubChart(containerId, items) {
+    var container = $(containerId);
+    if (!container) return;
+    var maxVal = 1;
+    for (var i = 0; i < items.length; i++) {
+      var t = Number(items[i].total || 0);
+      if (t > maxVal) maxVal = t;
+    }
+
+    var w = 680;
+    var h = 195;
+    var padL = 32;
+    var padR = 20;
+    var padT = 22;
+    var padB = 34;
+    var plotW = w - padL - padR;
+    var plotH = h - padT - padB;
+    var count = Math.max(items.length, 1);
+    var slotW = plotW / count;
+    var barW = Math.min(72, slotW * 0.45);
+
+    var svg = '<line x1="' + padL + '" y1="' + (padT + plotH) + '" x2="' + (w - padR) + '" y2="' + (padT + plotH) + '" stroke="#cbd5e1" stroke-width="1"/>';
+    for (var j = 0; j < items.length; j++) {
+      var it = items[j];
+      var hUnder = maxVal === 0 ? 0 : (Number(it.underSla || 0) / maxVal) * plotH;
+      var hOver = maxVal === 0 ? 0 : (Number(it.overSla || 0) / maxVal) * plotH;
+      var hNot = maxVal === 0 ? 0 : (Number(it.notInbounded || 0) / maxVal) * plotH;
+      var x = padL + j * slotW + (slotW - barW) / 2;
+      var yUnder = padT + plotH - hUnder;
+      var yOver = yUnder - hOver;
+      var yNot = yOver - hNot;
+
+      svg += '<rect x="' + x.toFixed(1) + '" y="' + yUnder.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + hUnder.toFixed(1) + '" fill="#10b981"></rect>';
+      svg += '<rect x="' + x.toFixed(1) + '" y="' + yOver.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + hOver.toFixed(1) + '" fill="#ef4444"></rect>';
+      svg += '<rect x="' + x.toFixed(1) + '" y="' + yNot.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + hNot.toFixed(1) + '" fill="#94a3b8"></rect>';
+      svg += '<text x="' + (x + barW / 2).toFixed(1) + '" y="' + Math.max(12, yNot - 5).toFixed(1) +
+        '" text-anchor="middle" font-size="11" font-weight="700" fill="#0f172a">' + formatNumber(it.total) + '</text>';
+      svg += '<text x="' + (x + barW / 2).toFixed(1) + '" y="' + (padT + plotH + 17) +
+        '" text-anchor="middle" font-size="11" font-weight="600" fill="#334155">' + escapeHtml(it.hubName) + '</text>';
+    }
+
+    var legend = '<div class="chart-legend">' +
+      '<span class="legend-item"><span class="legend-dot" style="background:#10b981"></span>Under SLA</span>' +
+      '<span class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>Over SLA</span>' +
+      '<span class="legend-item"><span class="legend-dot" style="background:#94a3b8"></span>Not Inbounded</span>' +
+      '</div>';
+
+    container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '">' + svg + '</svg>' + legend;
+  }
+
+  function renderDashboard() {
+    var d = state.dashboard;
+    if (!d) return;
+
+    var k = d.kpis || {};
+    $('kpi-total-orders').textContent = formatNumber(k.totalOrders || 0);
+    $('kpi-delivered-rate').textContent = Number(k.deliveredRate || 0).toFixed(2) + '%';
+    $('kpi-delivered-rate-sub').textContent = formatNumber(k.deliveredCount || 0) + ' of ' + formatNumber(k.closedCount || 0) + ' closed';
+    $('kpi-active-shipments').textContent = formatNumber(k.activeShipments || 0);
+    $('kpi-return-rate').textContent = Number(k.returnRate || 0).toFixed(2) + '%';
+    $('kpi-return-rate-sub').textContent = formatNumber(k.returnFlagCount || 0) + ' return flagged';
+    $('kpi-avg-delivery-time').textContent = Number(k.avgDeliveryTime || 0).toFixed(1) + ' days';
+
+    if ($('dashboard-meta-readout') && d.meta) {
+      $('dashboard-meta-readout').textContent =
+        'Showing ' + formatNumber(d.meta.filteredCount) + ' of ' + formatNumber(d.meta.totalUnfiltered) +
+        ' orders • Ref Date: ' + (d.meta.refDate || state.todayYmd);
+    }
+
+    var charts = d.charts || {};
+    renderDonutChart('chart-status-breakdown', charts.statusBreakdown || [], 'status', 'count', function (it, idx) {
+      return STATUS_COLORS[it.status] || CHART_COLORS[idx % CHART_COLORS.length];
+    });
+
+    var hubScope = state.hubVolumeScope === 'destination' ? 'destination' : 'current';
+    var hubSeries = (charts.volumeByHub && charts.volumeByHub[hubScope]) || [];
+    renderVerticalBarChart('chart-volume-hub', hubSeries, 'hubName', 'count', function (_it, idx) {
+      return CHART_COLORS[idx % CHART_COLORS.length];
+    });
+
+    renderStackedReturnChart('chart-return-hub', charts.returnRateByDestinationHub || [], 'hubName', 'hub');
+
+    renderDonutChart('chart-shipper-breakdown', charts.shipperBreakdown || [], 'shipper_name', 'total', function (_it, idx) {
+      return CHART_COLORS[idx % CHART_COLORS.length];
+    });
+
+    renderHorizontalBarChart('chart-volume-shipper', charts.volumeByShipper || [], 'shipper_name', 'total');
+    renderStackedReturnChart('chart-return-shipper', charts.returnRateByShipper || [], 'shipper_name', 'shipper_id');
+    renderSlaByHubChart('chart-sla-hub', charts.slaByHub || []);
+
+    // High Aging Monitoring Table
+    var agingBody = $('high-aging-tbody');
+    var agingRows = d.highAgingOrders || [];
+    if (agingBody) {
+      if (agingRows.length === 0) {
+        agingBody.innerHTML = '<tr><td colspan="10" class="empty-state">No active inbounded shipments match the current filters.</td></tr>';
+      } else {
+        agingBody.innerHTML = agingRows.map(function (o) {
+          var jumpLabel = o.status === 'On Shipment' ? 'Open Delivery' : (o.status === 'Pending Pickup' ? 'Open Pickup' : 'Open Sort');
+          var jumpTarget = o.status === 'On Shipment' ? 'delivery' : (o.status === 'Pending Pickup' ? 'pickup' : 'sort');
+          return '<tr>' +
+            '<td class="mono">' + escapeHtml(o.order_id) + '</td>' +
+            '<td class="mono">' + escapeHtml(o.resi) + '</td>' +
+            '<td>' + escapeHtml(o.shipper_name || o.normalized_shipper_id) + '</td>' +
+            '<td>' + statusBadge(o.status, o.return_flag) + '</td>' +
+            '<td>' + escapeHtml(o.current_hub_name || o.current_hub) + '</td>' +
+            '<td>' + escapeHtml(o.destination_hub_name || o.destination_hub) + '</td>' +
+            '<td class="mono">' + escapeHtml(o.inbound_date || '-') + '</td>' +
+            '<td><strong>' + escapeHtml(o.agingDays) + '</strong></td>' +
+            '<td>' + slaBadge(o.agingType, o.agingDays) + '</td>' +
+            '<td><button type="button" class="btn btn-sm btn-primary quick-jump-btn" data-order-id="' +
+              escapeHtml(o.order_id) + '" data-target="' + jumpTarget + '" data-current-hub="' +
+              escapeHtml(o.current_hub) + '" data-dest-hub="' + escapeHtml(o.destination_hub) +
+              '" data-return-flag="' + escapeHtml(o.return_flag) + '">' + jumpLabel + '</button></td>' +
+            '</tr>';
+        }).join('');
+      }
+    }
+
+    // Recent Operational Logs
+    var logsBody = $('op-logs-tbody');
+    var logs = d.recentLogs || state.opLogs || [];
+    if (logsBody) {
+      if (logs.length === 0) {
+        logsBody.innerHTML = '<tr><td colspan="8" class="empty-state">No operational logs recorded yet.</td></tr>';
+      } else {
+        logsBody.innerHTML = logs.map(function (l) {
+          var trans = (l.from_status || '-') + ' -> ' + (l.to_status || '-');
+          return '<tr>' +
+            '<td class="mono">' + escapeHtml(l.timestamp) + '</td>' +
+            '<td class="mono">' + escapeHtml(l.order_id) + '</td>' +
+            '<td><strong>' + escapeHtml(l.action) + '</strong></td>' +
+            '<td>' + escapeHtml(trans) + '</td>' +
+            '<td class="mono">' + escapeHtml(l.current_hub || '-') + '</td>' +
+            '<td>' + escapeHtml(l.courier || '-') + '</td>' +
+            '<td>' + escapeHtml(l.notes || '-') + '</td>' +
+            '<td class="mono">' + escapeHtml(l.operator_email || '-') + '</td>' +
+            '</tr>';
+        }).join('');
+      }
+    }
+  }
+
+  function renderInputView() {
+    var tbody = $('input-recent-tbody');
+    if (!tbody) return;
+    var recent = state.orders.slice().reverse().slice(0, 15);
+    if (recent.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No orders available yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = recent.map(function (o) {
+      return '<tr>' +
+        '<td class="mono">' + escapeHtml(o.order_id) + '</td>' +
+        '<td class="mono">' + escapeHtml(o.resi) + '</td>' +
+        '<td>' + escapeHtml(o.shipper_name || o.normalized_shipper_id) + '</td>' +
+        '<td>' + statusBadge(o.status, o.return_flag) + '</td>' +
+        '<td>' + escapeHtml(o.current_hub) + '</td>' +
+        '<td>' + escapeHtml(o.destination_hub) + '</td>' +
+        '<td>' + escapeHtml(o.destination_address) + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function getFilteredPickupOrders() {
+    var scan = ($('pickup-scan-input') ? $('pickup-scan-input').value : '').trim().toLowerCase();
+    var hub = $('pickup-hub-filter') ? $('pickup-hub-filter').value : '';
+    return state.orders.filter(function (o) {
+      if (o.status !== 'Pending Pickup') return false;
+      if (hub && o.current_hub !== hub) return false;
+      if (scan) {
+        var oid = String(o.order_id || '').toLowerCase();
+        var resi = String(o.resi || '').toLowerCase();
+        if (oid.indexOf(scan) === -1 && resi.indexOf(scan) === -1) return false;
+      }
+      return true;
+    });
+  }
+
+  function renderPickupView() {
+    var rows = getFilteredPickupOrders();
+    var tbody = $('pickup-tbody');
+    var empty = $('pickup-empty');
+    if (!tbody) return;
+
+    if (rows.length === 0) {
+      tbody.innerHTML = '';
+      if (empty) empty.classList.remove('hidden');
+    } else {
+      if (empty) empty.classList.add('hidden');
+      tbody.innerHTML = rows.map(function (o) {
+        var checked = state.selectedPickup.has(o.order_id) ? ' checked' : '';
+        return '<tr>' +
+          '<td><input type="checkbox" class="pickup-row-cb" value="' + escapeHtml(o.order_id) + '"' + checked + ' /></td>' +
+          '<td class="mono">' + escapeHtml(o.order_id) + '</td>' +
+          '<td class="mono">' + escapeHtml(o.resi) + '</td>' +
+          '<td>' + escapeHtml(o.shipper_name || o.normalized_shipper_id) + '</td>' +
+          '<td>' + escapeHtml(o.pickup_address || '-') + '</td>' +
+          '<td>' + escapeHtml(o.current_hub) + '</td>' +
+          '<td>' + escapeHtml(o.destination_hub) + '</td>' +
+          '<td>' + statusBadge(o.status, o.return_flag) + '</td>' +
+          '</tr>';
+      }).join('');
+    }
+    if ($('pickup-selection-count')) {
+      $('pickup-selection-count').textContent = state.selectedPickup.size + ' selected';
+    }
+  }
+
+  function categorizeSortOrders() {
+    var ready = [];
+    var linehaul = [];
+    var flagged = [];
+    for (var i = 0; i < state.orders.length; i++) {
+      var o = state.orders[i];
+      if (o.status !== 'Transit') continue;
+      if (Number(o.return_flag) === 1) {
+        flagged.push(o);
+      } else if (o.current_hub === o.destination_hub) {
+        ready.push(o);
+      } else {
+        linehaul.push(o);
+      }
+    }
+    return { ready: ready, linehaul: linehaul, flagged: flagged };
+  }
+
+  function renderSortView() {
+    var buckets = categorizeSortOrders();
+    if ($('sort-count-ready')) $('sort-count-ready').textContent = String(buckets.ready.length);
+    if ($('sort-count-linehaul')) $('sort-count-linehaul').textContent = String(buckets.linehaul.length);
+    if ($('sort-count-flagged')) $('sort-count-flagged').textContent = String(buckets.flagged.length);
+
+    var tabs = ['ready', 'linehaul', 'flagged'];
+    tabs.forEach(function (t) {
+      var btn = $('sort-tab-' + t);
+      if (btn) btn.classList.toggle('active', state.sortTab === t);
+    });
+
+    var scan = ($('sort-scan-input') ? $('sort-scan-input').value : '').trim().toLowerCase();
+    var hub = $('sort-hub-filter') ? $('sort-hub-filter').value : '';
+    var list = (buckets[state.sortTab] || []).filter(function (o) {
+      if (hub && o.current_hub !== hub) return false;
+      if (scan) {
+        var oid = String(o.order_id || '').toLowerCase();
+        var resi = String(o.resi || '').toLowerCase();
+        if (oid.indexOf(scan) === -1 && resi.indexOf(scan) === -1) return false;
+      }
+      return true;
+    });
+
+    var tbody = $('sort-tbody');
+    var empty = $('sort-empty');
+    if (!tbody) return;
+    if (list.length === 0) {
+      tbody.innerHTML = '';
+      if (empty) empty.classList.remove('hidden');
+    } else {
+      if (empty) empty.classList.add('hidden');
+      tbody.innerHTML = list.map(function (o) {
+        var checked = state.selectedSort.has(o.order_id) ? ' checked' : '';
+        return '<tr>' +
+          '<td><input type="checkbox" class="sort-row-cb" value="' + escapeHtml(o.order_id) + '"' + checked + ' /></td>' +
+          '<td class="mono">' + escapeHtml(o.order_id) + '</td>' +
+          '<td class="mono">' + escapeHtml(o.resi) + '</td>' +
+          '<td>' + escapeHtml(o.shipper_name || o.normalized_shipper_id) + '</td>' +
+          '<td>' + escapeHtml(o.current_hub) + '</td>' +
+          '<td>' + escapeHtml(o.destination_hub) + '</td>' +
+          '<td class="mono">' + escapeHtml(o.inbound_date || '-') + '</td>' +
+          '<td>' + slaBadge(o.agingType, o.agingDays) + '</td>' +
+          '<td>' + statusBadge(o.status, o.return_flag) + '</td>' +
+          '</tr>';
+      }).join('');
+    }
+
+    if ($('sort-selection-count')) {
+      $('sort-selection-count').textContent = state.selectedSort.size + ' selected';
+    }
+  }
+
+  function getFilteredDeliveryOrders() {
+    var scan = ($('delivery-scan-input') ? $('delivery-scan-input').value : '').trim().toLowerCase();
+    var hub = $('delivery-hub-filter') ? $('delivery-hub-filter').value : '';
+    return state.orders.filter(function (o) {
+      var eligible =
+        o.status === 'On Shipment' ||
+        (o.status === 'Transit' && Number(o.return_flag) === 1);
+      if (!eligible) return false;
+      if (hub && o.current_hub !== hub && o.destination_hub !== hub) return false;
+      if (scan) {
+        var oid = String(o.order_id || '').toLowerCase();
+        var resi = String(o.resi || '').toLowerCase();
+        if (oid.indexOf(scan) === -1 && resi.indexOf(scan) === -1) return false;
+      }
+      return true;
+    });
+  }
+
+  function renderDeliveryView() {
+    var rows = getFilteredDeliveryOrders();
+    var tbody = $('delivery-tbody');
+    var empty = $('delivery-empty');
+    if (!tbody) return;
+
+    if (rows.length === 0) {
+      tbody.innerHTML = '';
+      if (empty) empty.classList.remove('hidden');
+    } else {
+      if (empty) empty.classList.add('hidden');
+      tbody.innerHTML = rows.map(function (o) {
+        var checked = state.selectedDelivery.has(o.order_id) ? ' checked' : '';
+        return '<tr>' +
+          '<td><input type="checkbox" class="delivery-row-cb" value="' + escapeHtml(o.order_id) + '"' + checked + ' /></td>' +
+          '<td class="mono">' + escapeHtml(o.order_id) + '</td>' +
+          '<td class="mono">' + escapeHtml(o.resi) + '</td>' +
+          '<td>' + escapeHtml(o.shipper_name || o.normalized_shipper_id) + '</td>' +
+          '<td>' + escapeHtml(o.current_hub) + '</td>' +
+          '<td>' + escapeHtml(o.destination_address) + '</td>' +
+          '<td>' + slaBadge(o.agingType, o.agingDays) + '</td>' +
+          '<td>' + statusBadge(o.status, o.return_flag) + '</td>' +
+          '</tr>';
+      }).join('');
+    }
+    if ($('delivery-selection-count')) {
+      $('delivery-selection-count').textContent = state.selectedDelivery.size + ' selected';
+    }
+  }
+
+  function renderCurrentView() {
+    updateNavCounts();
+    if (state.currentView === 'dashboard') renderDashboard();
+    else if (state.currentView === 'input') renderInputView();
+    else if (state.currentView === 'pickup') renderPickupView();
+    else if (state.currentView === 'sort') renderSortView();
+    else if (state.currentView === 'delivery') renderDeliveryView();
+  }
+
+  function pruneSelections() {
+    var activeIds = {};
+    state.orders.forEach(function (o) {
+      activeIds[o.order_id] = o;
+    });
+    state.selectedPickup.forEach(function (id) {
+      if (!activeIds[id] || activeIds[id].status !== 'Pending Pickup') {
+        state.selectedPickup.delete(id);
+      }
+    });
+    state.selectedSort.forEach(function (id) {
+      if (!activeIds[id] || activeIds[id].status !== 'Transit') {
+        state.selectedSort.delete(id);
+      }
+    });
+    state.selectedDelivery.forEach(function (id) {
+      var o = activeIds[id];
+      var ok = o && (o.status === 'On Shipment' || (o.status === 'Transit' && Number(o.return_flag) === 1));
+      if (!ok) {
+        state.selectedDelivery.delete(id);
+      }
+    });
+  }
+
+  async function refreshAllData(silent) {
+    try {
+      showGlobalError('');
+      var filters = getDashboardFilters();
+      var res = await callGas('apiGetBootstrapData', [filters]);
+      if (!res || !res.ok) {
+        throw new Error((res && res.error) || 'Failed to load data.');
+      }
+      state.todayYmd = res.todayYmd || state.todayYmd;
+      state.dashboard = res.dashboard;
+      state.orders = res.orders || [];
+      state.shippers = res.shippers || [];
+      state.opLogs = res.opLogs || [];
+      if ($('pickup-date') && !$('pickup-date').value && state.todayYmd) {
+        $('pickup-date').value = state.todayYmd;
+      }
+      if ($('delivery-date') && !$('delivery-date').value && state.todayYmd) {
+        $('delivery-date').value = state.todayYmd;
+      }
+      pruneSelections();
+      populateShipperDropdowns();
+      renderCurrentView();
+      if (!silent) {
+        showToast('Refreshed live orders & dashboard analytics.', 'success');
+      }
+    } catch (err) {
+      showGlobalError(err.message);
+      showToast(err.message, 'error');
+    }
+  }
+
+  var filterDebounce = null;
+  async function refreshDashboardOnly() {
+    try {
+      var res = await callGas('apiGetDashboardData', [getDashboardFilters()]);
+      if (res && res.ok) {
+        state.dashboard = res;
+        renderDashboard();
+      } else {
+        showToast((res && res.error) || 'Dashboard query failed.', 'error');
+      }
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  function scheduleDashboardFilter() {
+    clearTimeout(filterDebounce);
+    filterDebounce = setTimeout(refreshDashboardOnly, 90);
+  }
+
+  function openCrossHubModal(mismatchOrders, payload) {
+    state.pendingCrossHubPayload = payload;
+    var body = $('confirm-modal-body');
+    if (body) {
+      var itemsHtml = mismatchOrders.map(function (m) {
+        return '<li class="mono">' + escapeHtml(m.order_id) + ' (' + escapeHtml(m.resi) + '): ' +
+          escapeHtml(m.current_hub) + ' != ' + escapeHtml(m.destination_hub) + '</li>';
+      }).join('');
+      body.innerHTML =
+        '<p><strong>Hub mismatch detected:</strong> The following order(s) have a Current Hub different from their Destination Hub. Dispatch anyway?</p>' +
+        '<ul class="modal-list">' + itemsHtml + '</ul>';
+    }
+    $('confirm-modal').classList.remove('hidden');
+  }
+
+  function closeCrossHubModal() {
+    state.pendingCrossHubPayload = null;
+    $('confirm-modal').classList.add('hidden');
+  }
+
+  async function submitCreateOrder(ev) {
+    ev.preventDefault();
+    var errBox = $('input-form-error');
+    errBox.classList.add('hidden');
+    errBox.textContent = '';
+
+    var shipperId = $('input-shipper-id').value.trim();
+    var currentHub = $('input-current-hub').value.trim();
+    var destHub = $('input-destination-hub').value.trim();
+    var destAddr = $('input-destination-address').value.trim();
+    var courier = $('input-courier').value.trim();
+    var notes = $('input-notes').value.trim();
+
+    if (!shipperId) {
+      errBox.textContent = 'Please select a Shipper.';
+      errBox.classList.remove('hidden');
+      showToast('Please select a Shipper.', 'error');
+      return;
+    }
+    if (!currentHub || !destHub) {
+      errBox.textContent = 'Please select both Origin Hub and Destination Hub.';
+      errBox.classList.remove('hidden');
+      showToast('Please select both Origin Hub and Destination Hub.', 'error');
+      return;
+    }
+    if (destAddr.length < 5) {
+      errBox.textContent = 'Destination address is required and must be at least 5 characters.';
+      errBox.classList.remove('hidden');
+      showToast('Destination address must be at least 5 characters.', 'error');
+      return;
+    }
+
+    var btn = $('btn-submit-order');
+    btn.disabled = true;
+    try {
+      var res = await callGas('apiCreateOrder', [{
+        shipper_id: shipperId,
+        current_hub: currentHub,
+        destination_hub: destHub,
+        destination_address: destAddr,
+        courier: courier,
+        notes: notes
+      }]);
+      if (!res || !res.ok) {
+        var msg = (res && res.error) || 'Failed to create order.';
+        errBox.textContent = msg;
+        errBox.classList.remove('hidden');
+        showToast(msg, 'error');
+        return;
+      }
+      $('input-destination-address').value = '';
+      $('input-courier').value = '';
+      $('input-notes').value = '';
+      showToast('Created order ' + res.order.order_id + ' (' + res.order.resi + ')', 'success');
+      await refreshAllData(true);
+    } catch (err) {
+      errBox.textContent = err.message;
+      errBox.classList.remove('hidden');
+      showToast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function runPickupConfirm(explicitOrderIds) {
+    var ids = explicitOrderIds || Array.from(state.selectedPickup);
+    if (ids.length === 0) {
+      showToast('Please select at least one order to confirm pickup.', 'error');
+      return;
+    }
+    var payload = {
+      orderIds: ids,
+      current_hub: $('pickup-confirm-hub').value || '',
+      inbound_date: $('pickup-date').value || state.todayYmd,
+      courier: $('pickup-courier').value.trim(),
+      notes: $('pickup-notes').value.trim()
+    };
+    try {
+      var res = await callGas('apiConfirmPickup', [payload]);
+      if (!res || !res.ok) {
+        showToast((res && res.error) || 'Pickup confirmation failed.', 'error');
+        await refreshAllData(true);
+        return;
+      }
+      ids.forEach(function (id) { state.selectedPickup.delete(id); });
+      var msg = 'Confirmed pickup for ' + res.updatedOrders.length + ' order(s) -> Transit.';
+      if (res.skipped && res.skipped.length > 0) {
+        msg += ' Skipped ' + res.skipped.length + ' stale order(s).';
+      }
+      showToast(msg, 'success');
+      await refreshAllData(true);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  async function runSortAction(action, forceCrossHub) {
+    var ids = Array.from(state.selectedSort);
+    if (ids.length === 0) {
+      showToast('Please select at least one Transit order.', 'error');
+      return;
+    }
+    var targetHub = $('sort-target-hub').value;
+    if (action === 'TRANSFER_HUB' && !targetHub) {
+      showToast('Please select a Transfer Target Hub.', 'error');
+      return;
+    }
+    var payload = {
+      orderIds: ids,
+      action: action,
+      target_hub: targetHub,
+      force_cross_hub: Boolean(forceCrossHub),
+      courier: $('sort-courier').value.trim(),
+      notes: $('sort-notes').value.trim()
+    };
+    try {
+      var res = await callGas('apiProcessSort', [payload]);
+      if (res && !res.ok && res.code === 'CROSS_HUB_CONFIRM_REQUIRED') {
+        openCrossHubModal(res.mismatchOrders || [], payload);
+        return;
+      }
+      if (!res || !res.ok) {
+        showToast((res && res.error) || 'Sort operation failed.', 'error');
+        await refreshAllData(true);
+        return;
+      }
+      state.selectedSort.clear();
+      var label = action === 'TRANSFER_HUB'
+        ? 'Transferred hub'
+        : (action === 'DISPATCH_DELIVERY' ? 'Dispatched to On Shipment' : 'Flagged for Return (RTS)');
+      showToast(label + ' for ' + res.updatedOrders.length + ' order(s).', 'success');
+      await refreshAllData(true);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  async function runDeliveryAction(action) {
+    var ids = Array.from(state.selectedDelivery);
+    if (ids.length === 0) {
+      showToast('Please select at least one order in Delivery queue.', 'error');
+      return;
+    }
+    var payload = {
+      orderIds: ids,
+      action: action,
+      end_date: $('delivery-date').value || state.todayYmd,
+      courier: $('delivery-courier').value.trim(),
+      notes: $('delivery-notes').value.trim()
+    };
+    try {
+      var res = await callGas('apiProcessDelivery', [payload]);
+      if (!res || !res.ok) {
+        showToast((res && res.error) || 'Delivery action failed.', 'error');
+        await refreshAllData(true);
+        return;
+      }
+      state.selectedDelivery.clear();
+      var label = action === 'MARK_DELIVERED'
+        ? 'Marked Delivered'
+        : (action === 'FAILED_RTS' ? 'Returned to Hub (Transit + RTS)' : 'Marked Returned');
+      showToast(label + ' for ' + res.updatedOrders.length + ' order(s).', 'success');
+      await refreshAllData(true);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  function bindEvents() {
+    // Nav tabs
+    ['dashboard', 'input', 'pickup', 'sort', 'delivery'].forEach(function (v) {
+      var btn = $('nav-' + v);
+      if (btn) {
+        btn.addEventListener('click', function () {
+          setActiveView(v, true);
+        });
+      }
+    });
+
+    // Global actions
+    if ($('btn-refresh-all')) {
+      $('btn-refresh-all').addEventListener('click', function () {
+        refreshAllData(false);
+      });
+    }
+    if ($('btn-sync-report')) {
+      $('btn-sync-report').addEventListener('click', async function () {
+        var btn = $('btn-sync-report');
+        btn.disabled = true;
+        try {
+          var res = await callGas('apiSyncOrderReport', []);
+          if (!res || !res.ok) {
+            showToast((res && res.error) || 'Sync order_report failed.', 'error');
+          } else {
+            showToast('Synced ' + res.syncedCount + ' rows to order_report (ARRAYFORMULAs preserved).', 'success');
+            await refreshAllData(true);
+          }
+        } catch (err) {
+          showToast(err.message, 'error');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    }
+    if ($('auto-refresh-toggle')) {
+      $('auto-refresh-toggle').addEventListener('change', function (e) {
+        if (state.autoRefreshTimer) {
+          clearInterval(state.autoRefreshTimer);
+          state.autoRefreshTimer = null;
+        }
+        if (e.target.checked) {
+          state.autoRefreshTimer = setInterval(function () {
+            refreshAllData(true);
+          }, 30000);
+          showToast('Auto-refresh enabled (30s).', 'info');
+        }
+      });
+    }
+
+    // Dashboard Filters
+    ['filter-date-from', 'filter-date-to', 'filter-hub', 'filter-status', 'filter-shipper', 'filter-sla'].forEach(function (id) {
+      var el = $(id);
+      if (el) el.addEventListener('change', refreshDashboardOnly);
+    });
+    if ($('filter-search')) {
+      $('filter-search').addEventListener('input', scheduleDashboardFilter);
+      $('filter-search').addEventListener('change', refreshDashboardOnly);
+    }
+    if ($('btn-reset-filters')) {
+      $('btn-reset-filters').addEventListener('click', function () {
+        ['filter-date-from', 'filter-date-to', 'filter-hub', 'filter-status', 'filter-shipper', 'filter-sla', 'filter-search'].forEach(function (id) {
+          if ($(id)) $(id).value = '';
+        });
+        refreshDashboardOnly();
+      });
+    }
+
+    // Volume per Hub scope toggle
+    ['btn-hub-scope-current', 'btn-hub-scope-dest'].forEach(function (id) {
+      var btn = $(id);
+      if (btn) {
+        btn.addEventListener('click', function () {
+          state.hubVolumeScope = btn.getAttribute('data-scope') || 'current';
+          $('btn-hub-scope-current').classList.toggle('active', state.hubVolumeScope === 'current');
+          $('btn-hub-scope-dest').classList.toggle('active', state.hubVolumeScope === 'destination');
+          renderDashboard();
+        });
+      }
+    });
+
+    // High Aging quick jump delegation
+    if ($('high-aging-tbody')) {
+      $('high-aging-tbody').addEventListener('click', function (e) {
+        var btn = e.target.closest('.quick-jump-btn');
+        if (!btn) return;
+        var oid = btn.getAttribute('data-order-id') || '';
+        var target = btn.getAttribute('data-target') || 'sort';
+        var curHub = btn.getAttribute('data-current-hub') || '';
+        var destHub = btn.getAttribute('data-dest-hub') || '';
+        var retFlag = btn.getAttribute('data-return-flag') || '';
+
+        if (target === 'delivery') {
+          if ($('delivery-scan-input')) $('delivery-scan-input').value = oid;
+          setActiveView('delivery', true);
+        } else if (target === 'pickup') {
+          if ($('pickup-scan-input')) $('pickup-scan-input').value = oid;
+          setActiveView('pickup', true);
+        } else {
+          if (Number(retFlag) === 1) state.sortTab = 'flagged';
+          else if (curHub === destHub) state.sortTab = 'ready';
+          else state.sortTab = 'linehaul';
+          if ($('sort-scan-input')) $('sort-scan-input').value = oid;
+          setActiveView('sort', true);
+        }
+      });
+    }
+
+    // Input Data form
+    if ($('input-shipper-id')) {
+      $('input-shipper-id').addEventListener('change', updatePickupAddressPreview);
+    }
+    if ($('form-create-order')) {
+      $('form-create-order').addEventListener('submit', submitCreateOrder);
+    }
+
+    // Pickup queue
+    if ($('pickup-scan-input')) {
+      $('pickup-scan-input').addEventListener('input', renderPickupView);
+      $('pickup-scan-input').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          var q = $('pickup-scan-input').value.trim().toUpperCase();
+          if (!q) return;
+          var exact = state.orders.filter(function (o) {
+            return o.status === 'Pending Pickup' &&
+              (String(o.order_id || '').toUpperCase() === q || String(o.resi || '').toUpperCase() === q);
+          });
+          if (exact.length === 1) {
+            runPickupConfirm([exact[0].order_id]);
+          } else {
+            renderPickupView();
+          }
+        }
+      });
+    }
+    if ($('pickup-hub-filter')) {
+      $('pickup-hub-filter').addEventListener('change', renderPickupView);
+    }
+    if ($('pickup-tbody')) {
+      $('pickup-tbody').addEventListener('change', function (e) {
+        if (!e.target.classList.contains('pickup-row-cb')) return;
+        if (e.target.checked) state.selectedPickup.add(e.target.value);
+        else state.selectedPickup.delete(e.target.value);
+        $('pickup-selection-count').textContent = state.selectedPickup.size + ' selected';
+      });
+    }
+    if ($('pickup-select-all')) {
+      $('pickup-select-all').addEventListener('change', function (e) {
+        var rows = getFilteredPickupOrders();
+        rows.forEach(function (o) {
+          if (e.target.checked) state.selectedPickup.add(o.order_id);
+          else state.selectedPickup.delete(o.order_id);
+        });
+        renderPickupView();
+      });
+    }
+    if ($('btn-confirm-pickup-batch')) {
+      $('btn-confirm-pickup-batch').addEventListener('click', function () {
+        runPickupConfirm(null);
+      });
+    }
+
+    // Sort queue
+    ['ready', 'linehaul', 'flagged'].forEach(function (t) {
+      var btn = $('sort-tab-' + t);
+      if (btn) {
+        btn.addEventListener('click', function () {
+          state.sortTab = t;
+          renderSortView();
+        });
+      }
+    });
+    if ($('sort-scan-input')) $('sort-scan-input').addEventListener('input', renderSortView);
+    if ($('sort-hub-filter')) $('sort-hub-filter').addEventListener('change', renderSortView);
+    if ($('sort-tbody')) {
+      $('sort-tbody').addEventListener('change', function (e) {
+        if (!e.target.classList.contains('sort-row-cb')) return;
+        if (e.target.checked) state.selectedSort.add(e.target.value);
+        else state.selectedSort.delete(e.target.value);
+        $('sort-selection-count').textContent = state.selectedSort.size + ' selected';
+      });
+    }
+    if ($('sort-select-all')) {
+      $('sort-select-all').addEventListener('change', function (e) {
+        var cbs = $('sort-tbody').querySelectorAll('.sort-row-cb');
+        cbs.forEach(function (cb) {
+          if (e.target.checked) state.selectedSort.add(cb.value);
+          else state.selectedSort.delete(cb.value);
+        });
+        renderSortView();
+      });
+    }
+    if ($('btn-sort-transfer')) {
+      $('btn-sort-transfer').addEventListener('click', function () {
+        runSortAction('TRANSFER_HUB', false);
+      });
+    }
+    if ($('btn-sort-dispatch')) {
+      $('btn-sort-dispatch').addEventListener('click', function () {
+        runSortAction('DISPATCH_DELIVERY', false);
+      });
+    }
+    if ($('btn-sort-flag-return')) {
+      $('btn-sort-flag-return').addEventListener('click', function () {
+        runSortAction('FLAG_RETURN', false);
+      });
+    }
+
+    // Modal events
+    if ($('btn-confirm-modal-cancel')) {
+      $('btn-confirm-modal-cancel').addEventListener('click', closeCrossHubModal);
+    }
+    if ($('btn-confirm-modal-proceed')) {
+      $('btn-confirm-modal-proceed').addEventListener('click', async function () {
+        var pending = state.pendingCrossHubPayload;
+        closeCrossHubModal();
+        if (pending) {
+          await runSortAction(pending.action, true);
+        }
+      });
+    }
+
+    // Delivery queue
+    if ($('delivery-scan-input')) $('delivery-scan-input').addEventListener('input', renderDeliveryView);
+    if ($('delivery-hub-filter')) $('delivery-hub-filter').addEventListener('change', renderDeliveryView);
+    if ($('delivery-tbody')) {
+      $('delivery-tbody').addEventListener('change', function (e) {
+        if (!e.target.classList.contains('delivery-row-cb')) return;
+        if (e.target.checked) state.selectedDelivery.add(e.target.value);
+        else state.selectedDelivery.delete(e.target.value);
+        $('delivery-selection-count').textContent = state.selectedDelivery.size + ' selected';
+      });
+    }
+    if ($('delivery-select-all')) {
+      $('delivery-select-all').addEventListener('change', function (e) {
+        var rows = getFilteredDeliveryOrders();
+        rows.forEach(function (o) {
+          if (e.target.checked) state.selectedDelivery.add(o.order_id);
+          else state.selectedDelivery.delete(o.order_id);
+        });
+        renderDeliveryView();
+      });
+    }
+    if ($('btn-delivery-delivered')) {
+      $('btn-delivery-delivered').addEventListener('click', function () {
+        runDeliveryAction('MARK_DELIVERED');
+      });
+    }
+    if ($('btn-delivery-failed-rts')) {
+      $('btn-delivery-failed-rts').addEventListener('click', function () {
+        runDeliveryAction('FAILED_RTS');
+      });
+    }
+    if ($('btn-delivery-returned')) {
+      $('btn-delivery-returned').addEventListener('click', function () {
+        runDeliveryAction('MARK_RETURNED');
+      });
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    bindEvents();
+    if (window.__APP_INIT__ && window.__APP_INIT__.initialSearch) {
+      var s = window.__APP_INIT__.initialSearch;
+      if ($('filter-search')) $('filter-search').value = s;
+    }
+    setActiveView(state.currentView, false);
+    refreshAllData(true);
+  });
+})();
+</script>

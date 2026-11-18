@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Logistic Performance Xpress — Interactive Preview</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased m-0 p-0">
+  <div class="max-w-7xl mx-auto p-4 md:p-6 space-y-5">
+    <!-- Top Header & Navigation -->
+    <header class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] font-extrabold text-sm flex items-center justify-center">
+          LPX
+        </div>
+        <div>
+          <h1 class="text-base font-bold leading-tight">Logistic Performance Xpress</h1>
+          <p class="text-xs text-[var(--muted-foreground)]">Interactive GAS Operations &amp; SLA Preview (Seeded from Live Google Sheet)</p>
+        </div>
+      </div>
+
+      <nav class="flex flex-wrap gap-1.5" aria-label="Preview Navigation">
+        <button type="button" data-tab="dashboard" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--primary)] text-[var(--primary-foreground)]">Dashboard</button>
+        <button type="button" data-tab="input" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold border border-[var(--border)] text-[var(--muted-foreground)]">Input Data</button>
+        <button type="button" data-tab="pickup" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold border border-[var(--border)] text-[var(--muted-foreground)]">Pickup <span id="badge-pickup" class="ml-1 px-1.5 py-0.5 rounded-full bg-[var(--secondary)] text-[var(--secondary-foreground)] text-xs">12</span></button>
+        <button type="button" data-tab="sort" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold border border-[var(--border)] text-[var(--muted-foreground)]">Sort <span id="badge-sort" class="ml-1 px-1.5 py-0.5 rounded-full bg-[var(--secondary)] text-[var(--secondary-foreground)] text-xs">13</span></button>
+        <button type="button" data-tab="delivery" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold border border-[var(--border)] text-[var(--muted-foreground)]">Delivery <span id="badge-delivery" class="ml-1 px-1.5 py-0.5 rounded-full bg-[var(--secondary)] text-[var(--secondary-foreground)] text-xs">8</span></button>
+      </nav>
+
+      <div class="flex items-center gap-2">
+        <button id="btn-sim-reset" type="button" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-[var(--border)] hover:bg-[var(--secondary)]">Reset Demo State</button>
+      </div>
+    </header>
+
+    <!-- Toast Banner -->
+    <div id="preview-toast" class="hidden rounded-lg border border-[var(--border)] bg-[var(--card)] px-4 py-2.5 text-xs font-medium flex items-center justify-between">
+      <span id="preview-toast-msg"></span>
+      <button type="button" onclick="document.getElementById('preview-toast').classList.add('hidden')" class="text-[var(--muted-foreground)] font-bold">✕</button>
+    </div>
+
+    <!-- ==================== DASHBOARD TAB ==================== -->
+    <section id="panel-dashboard" class="tab-panel space-y-4">
+      <!-- 5 KPI Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
+          <div class="text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">Total Orders</div>
+          <div id="p-kpi-total" class="text-2xl font-extrabold mt-1 tabular-nums">532</div>
+          <div class="text-xs text-[var(--muted-foreground)] mt-1">Live db_orders</div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
+          <div class="text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">Delivered Rate</div>
+          <div id="p-kpi-deliv" class="text-2xl font-extrabold mt-1 tabular-nums text-[var(--success)]">84.4%</div>
+          <div id="p-kpi-deliv-sub" class="text-xs text-[var(--muted-foreground)] mt-1">423 of 501 closed</div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
+          <div class="text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">Active Shipments</div>
+          <div id="p-kpi-active" class="text-2xl font-extrabold mt-1 tabular-nums text-[var(--primary)]">31</div>
+          <div class="text-xs text-[var(--muted-foreground)] mt-1">Pending + Transit + On Ship</div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
+          <div class="text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">Return Rate</div>
+          <div id="p-kpi-ret" class="text-2xl font-extrabold mt-1 tabular-nums text-[var(--error)]">15.4%</div>
+          <div id="p-kpi-ret-sub" class="text-xs text-[var(--muted-foreground)] mt-1">82 return flagged</div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
+          <div class="text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">Avg Delivery Time</div>
+          <div id="p-kpi-avg" class="text-2xl font-extrabold mt-1 tabular-nums text-[var(--warning)]">5.3 days</div>
+          <div class="text-xs text-[var(--muted-foreground)] mt-1">SLA limit: &lt; 8 days</div>
+        </div>
+      </div>
+
+      <!-- Filter Strip -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+          <div>
+            <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1">Hub Filter</label>
+            <select id="p-filter-hub" class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 text-xs">
+              <option value="">All Hubs</option>
+              <option value="HUB-JKT">HUB-JKT — Jakarta Central Hub</option>
+              <option value="HUB-BDG">HUB-BDG — Bandung West Hub</option>
+              <option value="HUB-SUB">HUB-SUB — Surabaya East Hub</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1">Shipper Filter</label>
+            <select id="p-filter-shipper" class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 text-xs">
+              <option value="">All Shippers</option>
+              <option value="SHP-01">SHP-01 — PT Toko Maju</option>
+              <option value="SHP-02">SHP-02 — CV Berkah Jaya</option>
+              <option value="SHP-03">SHP-03 — PT Maju Jaya Sejahtera</option>
+              <option value="SHP-04">SHP-04 — PT Mencari Cinta Sejati</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1">SLA Type</label>
+            <select id="p-filter-sla" class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 text-xs">
+              <option value="">All SLA Types</option>
+              <option value="Under SLA">Under SLA (&lt; 8 days)</option>
+              <option value="Over SLA">Over SLA (&gt;= 8 days)</option>
+              <option value="Not Inbounded">Not Inbounded</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1">Volume Scope</label>
+            <div class="flex rounded-lg border border-[var(--border)] overflow-hidden">
+              <button type="button" id="p-scope-cur" class="flex-1 py-1.5 text-xs font-semibold bg-[var(--primary)] text-[var(--primary-foreground)]">Current</button>
+              <button type="button" id="p-scope-dest" class="flex-1 py-1.5 text-xs font-semibold text-[var(--muted-foreground)]">Destination</button>
+            </div>
+          </div>
+          <div>
+            <button type="button" id="p-btn-reset" class="w-full py-1.5 rounded-lg border border-[var(--border)] text-xs font-semibold hover:bg-[var(--secondary)]">Reset Filters</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Charts Grid -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
+          <h3 class="text-sm font-bold mb-2">Order Status Breakdown</h3>
+          <div id="p-chart-status"></div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
+          <h3 class="text-sm font-bold mb-2">Volume per Hub</h3>
+          <div id="p-chart-hub"></div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
+          <h3 class="text-sm font-bold mb-2">Return Rate by Destination Hub</h3>
+          <div id="p-chart-return-hub"></div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
+          <h3 class="text-sm font-bold mb-2">Volume per Shipper</h3>
+          <div id="p-chart-shipper"></div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 lg:col-span-2">
+          <h3 class="text-sm font-bold mb-2">SLA by Hub (Not Inbounded vs Under SLA vs Over SLA)</h3>
+          <div id="p-chart-sla"></div>
+        </div>
+      </div>
+
+      <!-- High Aging Monitoring -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h3 class="text-sm font-bold">High Aging Monitoring (Active Shipments)</h3>
+            <p class="text-xs text-[var(--muted-foreground)]">Click an action button to jump directly to Sort or Delivery queue</p>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs border-collapse">
+            <thead>
+              <tr class="border-b border-[var(--border)] text-left text-[var(--muted-foreground)]">
+                <th class="py-2 px-2">Order ID</th>
+                <th class="py-2 px-2">Resi</th>
+                <th class="py-2 px-2">Shipper</th>
+                <th class="py-2 px-2">Status</th>
+                <th class="py-2 px-2">Route</th>
+                <th class="py-2 px-2">Aging</th>
+                <th class="py-2 px-2">SLA</th>
+                <th class="py-2 px-2">Action</th>
+              </tr>
+            </thead>
+            <tbody id="p-high-aging-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== INPUT DATA TAB ==================== -->
+    <section id="panel-input" class="tab-panel hidden bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 space-y-4">
+      <div>
+        <h2 class="text-base font-bold">Input Data — Create New Order</h2>
+        <p class="text-xs text-[var(--muted-foreground)]">Writes 10-col row to <span class="font-mono">db_orders</span> + audit entry to <span class="font-mono">op_logs</span>.</p>
+      </div>
+      <form id="p-form-input" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1">Shipper *</label>
+          <select id="p-in-shipper" class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs">
+            <option value="SHP-01">SHP-01 — PT Toko Maju</option>
+            <option value="SHP-02">SHP-02 — CV Berkah Jaya</option>
+            <option value="SHP-03">SHP-03 — PT Maju Jaya Sejahtera</option>
+            <option value="SHP-04">SHP-04 — PT Mencari Cinta Sejati</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1">Pickup Address Preview</label>
+          <div id="p-in-preview" class="rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
+            PT Toko Maju — Jl. Merdeka No. 1, Jakarta
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1">Origin Hub *</label>
+          <select id="p-in-cur" class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs">
+            <option value="HUB-JKT">HUB-JKT — Jakarta Central Hub</option>
+            <option value="HUB-BDG">HUB-BDG — Bandung West Hub</option>
+            <option value="HUB-SUB">HUB-SUB — Surabaya East Hub</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1">Destination Hub *</label>
+          <select id="p-in-dest" class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs">
+            <option value="HUB-BDG">HUB-BDG — Bandung West Hub</option>
+            <option value="HUB-JKT">HUB-JKT — Jakarta Central Hub</option>
+            <option value="HUB-SUB">HUB-SUB — Surabaya East Hub</option>
+          </select>
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1">Destination Address *</label>
+          <input id="p-in-addr" type="text" placeholder="Jl. Asia Afrika No. 88, Bandung" class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs" />
+        </div>
+        <div class="md:col-span-2 flex justify-end">
+          <button type="submit" class="px-4 py-2 rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-semibold">Create Order</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- ==================== PICKUP TAB ==================== -->
+    <section id="panel-pickup" class="tab-panel hidden bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-base font-bold">Pickup Queue (Pending Pickup &rarr; Transit)</h2>
+          <p class="text-xs text-[var(--muted-foreground)]">Select orders to simulate confirming pickup into <span class="font-mono">Transit</span>.</p>
+        </div>
+        <button id="p-btn-pickup" type="button" class="px-3 py-1.5 rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-semibold">Confirm Pickup Selected</button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs border-collapse">
+          <thead>
+            <tr class="border-b border-[var(--border)] text-left text-[var(--muted-foreground)]">
+              <th class="py-2 px-2">Sel</th>
+              <th class="py-2 px-2">Order ID</th>
+              <th class="py-2 px-2">Resi</th>
+              <th class="py-2 px-2">Shipper</th>
+              <th class="py-2 px-2">Route</th>
+              <th class="py-2 px-2">Status</th>
+            </tr>
+          </thead>
+          <tbody id="p-pickup-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ==================== SORT TAB ==================== -->
+    <section id="panel-sort" class="tab-panel hidden bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-base font-bold">Sortation Hub Queue (Transit)</h2>
+          <p class="text-xs text-[var(--muted-foreground)]">Transfer hubs, dispatch to <span class="font-mono">On Shipment</span>, or flag <span class="font-mono">return_flag = 1</span>.</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button id="p-btn-sort-transfer" type="button" class="px-3 py-1.5 rounded-lg border border-[var(--border)] text-xs font-semibold">Transfer to Dest Hub</button>
+          <button id="p-btn-sort-dispatch" type="button" class="px-3 py-1.5 rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-semibold">Dispatch Delivery</button>
+          <button id="p-btn-sort-flag" type="button" class="px-3 py-1.5 rounded-lg bg-[var(--warning)] text-[var(--primary-foreground)] text-xs font-semibold">Flag Return</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs border-collapse">
+          <thead>
+            <tr class="border-b border-[var(--border)] text-left text-[var(--muted-foreground)]">
+              <th class="py-2 px-2">Sel</th>
+              <th class="py-2 px-2">Order ID</th>
+              <th class="py-2 px-2">Resi</th>
+              <th class="py-2 px-2">Current Hub</th>
+              <th class="py-2 px-2">Dest Hub</th>
+              <th class="py-2 px-2">Aging</th>
+              <th class="py-2 px-2">Status</th>
+            </tr>
+          </thead>
+          <tbody id="p-sort-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ==================== DELIVERY TAB ==================== -->
+    <section id="panel-delivery" class="tab-panel hidden bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-base font-bold">Delivery &amp; Return Resolution</h2>
+          <p class="text-xs text-[var(--muted-foreground)]">Mark Delivered, Failed &rarr; Return to Hub, or Mark Returned.</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button id="p-btn-deliv-done" type="button" class="px-3 py-1.5 rounded-lg bg-[var(--success)] text-[var(--primary-foreground)] text-xs font-semibold">Mark Delivered</button>
+          <button id="p-btn-deliv-rts" type="button" class="px-3 py-1.5 rounded-lg bg-[var(--warning)] text-[var(--primary-foreground)] text-xs font-semibold">Failed &rarr; Return to Hub</button>
+          <button id="p-btn-deliv-ret" type="button" class="px-3 py-1.5 rounded-lg bg-[var(--error)] text-[var(--primary-foreground)] text-xs font-semibold">Mark Returned</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs border-collapse">
+          <thead>
+            <tr class="border-b border-[var(--border)] text-left text-[var(--muted-foreground)]">
+              <th class="py-2 px-2">Sel</th>
+              <th class="py-2 px-2">Order ID</th>
+              <th class="py-2 px-2">Resi</th>
+              <th class="py-2 px-2">Shipper</th>
+              <th class="py-2 px-2">Hub</th>
+              <th class="py-2 px-2">Aging</th>
+              <th class="py-2 px-2">Status</th>
+            </tr>
+          </thead>
+          <tbody id="p-delivery-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (function () {
+      const SHIPPERS = {
+        'SHP-01': { name: 'PT Toko Maju', addr: 'Jl. Merdeka No. 1, Jakarta' },
+        'SHP-02': { name: 'CV Berkah Jaya', addr: 'Jl. Asia Afrika No. 10, Bandung' },
+        'SHP-03': { name: 'PT Maju Jaya Sejahtera', addr: 'Jl. Selat Malaka No 5 Jogjakarta' },
+        'SHP-04': { name: 'PT Mencari Cinta Sejati', addr: 'Jl. Jalan aja ga tau mau kemana, Surabaya' }
+      };
+
+      const BASE_SNAPSHOT = {
+        totalOrders: 532,
+        delivered: 423,
+        returned: 78,
+        returnFlagged: 82,
+        avgDays: 5.3,
+        hubsCurrent: { 'HUB-JKT': 183, 'HUB-BDG': 170, 'HUB-SUB': 179 },
+        hubsDest: { 'HUB-JKT': 173, 'HUB-BDG': 174, 'HUB-SUB': 185 },
+        returnHub: [
+          { hub: 'HUB-JKT', name: 'Jakarta Central Hub', normal: 147, returned: 26, rate: 15.0 },
+          { hub: 'HUB-BDG', name: 'Bandung West Hub', normal: 152, returned: 22, rate: 12.6 },
+          { hub: 'HUB-SUB', name: 'Surabaya East Hub', normal: 151, returned: 34, rate: 18.4 }
+        ],
+        shippers: [
+          { id: 'SHP-01', name: 'PT Toko Maju', total: 181 },
+          { id: 'SHP-02', name: 'CV Berkah Jaya', total: 183 },
+          { id: 'SHP-03', name: 'PT Maju Jaya Sejahtera', total: 154 },
+          { id: 'SHP-04', name: 'PT Mencari Cinta Sejati', total: 14 }
+        ],
+        slaHubs: [
+          { hub: 'HUB-JKT', name: 'Jakarta Central Hub', notIn: 6, under: 147, over: 30 },
+          { hub: 'HUB-BDG', name: 'Bandung West Hub', notIn: 3, under: 131, over: 36 },
+          { hub: 'HUB-SUB', name: 'Surabaya East Hub', notIn: 3, under: 141, over: 35 }
+        ],
+        activeQueue: [
+          { id: 'ORD-261102-3340', resi: 'RS-37037610', shp: 'SHP-03', status: 'Transit', cur: 'HUB-JKT', dest: 'HUB-SUB', aging: 15, sla: 'Over SLA', rts: 1 },
+          { id: 'ORD-261105-3141', resi: 'RS-52635590', shp: 'SHP-02', status: 'On Shipment', cur: 'HUB-SUB', dest: 'HUB-SUB', aging: 8, sla: 'Over SLA', rts: 0 },
+          { id: 'ORD-261105-7198', resi: 'RS-15573188', shp: 'SHP-03', status: 'On Shipment', cur: 'HUB-SUB', dest: 'HUB-JKT', aging: 7, sla: 'Under SLA', rts: 1 },
+          { id: 'ORD-261111-7390', resi: 'RS-15211887', shp: 'SHP-01', status: 'Transit', cur: 'HUB-JKT', dest: 'HUB-SUB', aging: 6, sla: 'Under SLA', rts: 1 },
+          { id: 'ORD-261112-2298', resi: 'RS-44548201', shp: 'SHP-01', status: 'On Shipment', cur: 'HUB-SUB', dest: 'HUB-BDG', aging: 5, sla: 'Under SLA', rts: 0 },
+          { id: 'ORD-261113-2415', resi: 'RS-83506391', shp: 'SHP-02', status: 'Transit', cur: 'HUB-JKT', dest: 'HUB-JKT', aging: 4, sla: 'Under SLA', rts: 0 },
+          { id: 'ORD-261111-5831', resi: 'RS-23199494', shp: 'SHP-02', status: 'Pending Pickup', cur: 'HUB-JKT', dest: 'HUB-BDG', aging: null, sla: 'Not Inbounded', rts: 0 },
+          { id: 'ORD-261113-9432', resi: 'RS-52014388', shp: 'SHP-01', status: 'Pending Pickup', cur: 'HUB-JKT', dest: 'HUB-BDG', aging: null, sla: 'Not Inbounded', rts: 0 },
+          { id: 'ORD-261116-7383', resi: 'RS-97214413', shp: 'SHP-03', status: 'Pending Pickup', cur: 'HUB-BDG', dest: 'HUB-SUB', aging: null, sla: 'Not Inbounded', rts: 0 }
+        ]
+      };
+
+      let model = JSON.parse(JSON.stringify(BASE_SNAPSHOT));
+      let hubScope = 'current';
+
+      function toast(msg) {
+        const box = document.getElementById('preview-toast');
+        document.getElementById('preview-toast-msg').textContent = msg;
+        box.classList.remove('hidden');
+      }
+
+      function switchTab(tab) {
+        document.querySelectorAll('.tab-panel').forEach((p) => p.classList.add('hidden'));
+        document.getElementById('panel-' + tab).classList.remove('hidden');
+        document.querySelectorAll('.tab-btn').forEach((b) => {
+          const active = b.getAttribute('data-tab') === tab;
+          b.className = active
+            ? 'tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--primary)] text-[var(--primary-foreground)]'
+            : 'tab-btn px-3 py-1.5 rounded-lg text-xs font-semibold border border-[var(--border)] text-[var(--muted-foreground)]';
+        });
+      }
+
+      function renderBarRows(elId, rows, colorVar) {
+        const el = document.getElementById(elId);
+        const max = Math.max(1, ...rows.map((r) => r.val));
+        el.innerHTML = rows.map((r) => {
+          const pct = Math.round((r.val / max) * 100);
+          return `<div class="mb-2.5">
+            <div class="flex justify-between text-xs mb-1">
+              <span class="font-medium">${r.label}</span>
+              <span class="font-bold tabular-nums">${r.val}</span>
+            </div>
+            <div class="w-full h-2.5 rounded-full bg-[var(--secondary)] overflow-hidden">
+              <div class="h-full rounded-full" style="width:${pct}%;background:${r.color || colorVar}"></div>
+            </div>
+          </div>`;
+        }).join('');
+      }
+
+      function renderAll() {
+        const fHub = document.getElementById('p-filter-hub').value;
+        const fShp = document.getElementById('p-filter-shipper').value;
+        const fSla = document.getElementById('p-filter-sla').value;
+        const scale = (fHub ? 0.34 : 1) * (fShp ? (fShp === 'SHP-04' ? 0.03 : 0.32) : 1) * (fSla ? (fSla === 'Under SLA' ? 0.78 : fSla === 'Over SLA' ? 0.19 : 0.03) : 1);
+
+        const pendingC = model.activeQueue.filter((o) => o.status === 'Pending Pickup').length + 9;
+        const transitC = model.activeQueue.filter((o) => o.status === 'Transit').length + 10;
+        const shipC = model.activeQueue.filter((o) => o.status === 'On Shipment').length + 3;
+        const activeC = pendingC + transitC + shipC;
+
+        const total = Math.max(1, Math.round(model.totalOrders * scale));
+        const deliv = Math.round(model.delivered * scale);
+        const ret = Math.round(model.returned * scale);
+        const closed = deliv + ret;
+        const delivRate = closed ? ((deliv / closed) * 100).toFixed(1) : '0.0';
+        const retRate = total ? ((Math.round(model.returnFlagged * scale) / total) * 100).toFixed(1) : '0.0';
+
+        document.getElementById('p-kpi-total').textContent = total.toLocaleString('en-US');
+        document.getElementById('p-kpi-deliv').textContent = delivRate + '%';
+        document.getElementById('p-kpi-deliv-sub').textContent = `${deliv} of ${closed} closed`;
+        document.getElementById('p-kpi-active').textContent = Math.max(1, Math.round(activeC * scale));
+        document.getElementById('p-kpi-ret').textContent = retRate + '%';
+        document.getElementById('p-kpi-avg').textContent = model.avgDays.toFixed(1) + ' days';
+
+        document.getElementById('badge-pickup').textContent = model.activeQueue.filter((o) => o.status === 'Pending Pickup').length;
+        document.getElementById('badge-sort').textContent = model.activeQueue.filter((o) => o.status === 'Transit').length;
+        document.getElementById('badge-delivery').textContent = model.activeQueue.filter((o) => o.status === 'On Shipment' || (o.status === 'Transit' && o.rts === 1)).length;
+
+        renderBarRows('p-chart-status', [
+          { label: 'Delivered', val: deliv, color: 'var(--success)' },
+          { label: 'Returned', val: ret, color: 'var(--error)' },
+          { label: 'Transit', val: Math.max(1, Math.round(transitC * scale)), color: 'var(--chart-1)' },
+          { label: 'Pending Pickup', val: Math.max(0, Math.round(pendingC * scale)), color: 'var(--warning)' },
+          { label: 'On Shipment', val: Math.max(0, Math.round(shipC * scale)), color: 'var(--chart-3)' }
+        ]);
+
+        const hubSrc = hubScope === 'destination' ? model.hubsDest : model.hubsCurrent;
+        renderBarRows('p-chart-hub', [
+          { label: 'Jakarta Central Hub', val: Math.round(hubSrc['HUB-JKT'] * scale), color: 'var(--chart-1)' },
+          { label: 'Bandung West Hub', val: Math.round(hubSrc['HUB-BDG'] * scale), color: 'var(--chart-2)' },
+          { label: 'Surabaya East Hub', val: Math.round(hubSrc['HUB-SUB'] * scale), color: 'var(--chart-3)' }
+        ]);
+
+        renderBarRows('p-chart-return-hub', model.returnHub.map((r) => ({
+          label: `${r.name} (${r.rate}%)`,
+          val: Math.round(r.returned * scale),
+          color: 'var(--error)'
+        })));
+
+        renderBarRows('p-chart-shipper', model.shippers.map((s, idx) => ({
+          label: s.name,
+          val: Math.round(s.total * scale),
+          color: `var(--chart-${(idx % 6) + 1})`
+        })));
+
+        document.getElementById('p-chart-sla').innerHTML = model.slaHubs.map((h) => {
+          const tot = h.notIn + h.under + h.over;
+          return `<div class="mb-3">
+            <div class="flex justify-between text-xs mb-1">
+              <span class="font-semibold">${h.name}</span>
+              <span class="text-[var(--muted-foreground)]">Under ${h.under} • Over ${h.over} • Not Inbounded ${h.notIn}</span>
+            </div>
+            <div class="w-full h-3 rounded-full overflow-hidden flex bg-[var(--secondary)]">
+              <div style="width:${(h.under/tot)*100}%;background:var(--success)"></div>
+              <div style="width:${(h.over/tot)*100}%;background:var(--error)"></div>
+              <div style="width:${(h.notIn/tot)*100}%;background:var(--muted-foreground)"></div>
+            </div>
+          </div>`;
+        }).join('');
+
+        // High Aging table
+        const aging = model.activeQueue.filter((o) => o.aging !== null).sort((a, b) => b.aging - a.aging);
+        document.getElementById('p-high-aging-tbody').innerHTML = aging.map((o) => `
+          <tr class="border-b border-[var(--border)]">
+            <td class="py-2 px-2 font-mono">${o.id}</td>
+            <td class="py-2 px-2 font-mono">${o.resi}</td>
+            <td class="py-2 px-2">${SHIPPERS[o.shp].name}</td>
+            <td class="py-2 px-2 font-semibold">${o.status}${o.rts ? ' (RTS)' : ''}</td>
+            <td class="py-2 px-2 font-mono">${o.cur} &rarr; ${o.dest}</td>
+            <td class="py-2 px-2 font-bold">${o.aging}d</td>
+            <td class="py-2 px-2"><span class="px-2 py-0.5 rounded-full font-semibold" style="background:${o.sla === 'Over SLA' ? 'var(--error)' : 'var(--success)'};color:var(--primary-foreground)">${o.sla}</span></td>
+            <td class="py-2 px-2"><button type="button" onclick="window.__jumpTab('${o.status === 'On Shipment' ? 'delivery' : 'sort'}')" class="px-2 py-1 rounded bg-[var(--primary)] text-[var(--primary-foreground)] font-semibold">${o.status === 'On Shipment' ? 'Delivery' : 'Sort'}</button></td>
+          </tr>`).join('');
+
+        // Pickup tbody
+        const pRows = model.activeQueue.filter((o) => o.status === 'Pending Pickup');
+        document.getElementById('p-pickup-tbody').innerHTML = pRows.map((o) => `
+          <tr class="border-b border-[var(--border)]">
+            <td class="py-2 px-2"><input type="checkbox" class="p-cb-pickup" value="${o.id}" /></td>
+            <td class="py-2 px-2 font-mono">${o.id}</td>
+            <td class="py-2 px-2 font-mono">${o.resi}</td>
+            <td class="py-2 px-2">${SHIPPERS[o.shp].name}</td>
+            <td class="py-2 px-2 font-mono">${o.cur} &rarr; ${o.dest}</td>
+            <td class="py-2 px-2 font-semibold">${o.status}</td>
+          </tr>`).join('') || '<tr><td colspan="6" class="py-4 text-center text-[var(--muted-foreground)]">No Pending Pickup orders.</td></tr>';
+
+        // Sort tbody
+        const sRows = model.activeQueue.filter((o) => o.status === 'Transit');
+        document.getElementById('p-sort-tbody').innerHTML = sRows.map((o) => `
+          <tr class="border-b border-[var(--border)]">
+            <td class="py-2 px-2"><input type="checkbox" class="p-cb-sort" value="${o.id}" /></td>
+            <td class="py-2 px-2 font-mono">${o.id}</td>
+            <td class="py-2 px-2 font-mono">${o.resi}</td>
+            <td class="py-2 px-2 font-mono">${o.cur}</td>
+            <td class="py-2 px-2 font-mono">${o.dest}</td>
+            <td class="py-2 px-2">${o.aging !== null ? o.aging + 'd' : '-'}</td>
+            <td class="py-2 px-2 font-semibold">${o.status}${o.rts ? ' (RTS)' : ''}</td>
+          </tr>`).join('') || '<tr><td colspan="7" class="py-4 text-center text-[var(--muted-foreground)]">No Transit orders.</td></tr>';
+
+        // Delivery tbody
+        const dRows = model.activeQueue.filter((o) => o.status === 'On Shipment' || (o.status === 'Transit' && o.rts === 1));
+        document.getElementById('p-delivery-tbody').innerHTML = dRows.map((o) => `
+          <tr class="border-b border-[var(--border)]">
+            <td class="py-2 px-2"><input type="checkbox" class="p-cb-deliv" value="${o.id}" /></td>
+            <td class="py-2 px-2 font-mono">${o.id}</td>
+            <td class="py-2 px-2 font-mono">${o.resi}</td>
+            <td class="py-2 px-2">${SHIPPERS[o.shp].name}</td>
+            <td class="py-2 px-2 font-mono">${o.cur}</td>
+            <td class="py-2 px-2">${o.aging !== null ? o.aging + 'd' : '-'}</td>
+            <td class="py-2 px-2 font-semibold">${o.status}${o.rts ? ' (RTS)' : ''}</td>
+          </tr>`).join('') || '<tr><td colspan="7" class="py-4 text-center text-[var(--muted-foreground)]">No Delivery orders.</td></tr>';
+      }
+
+      window.__jumpTab = switchTab;
+
+      document.querySelectorAll('.tab-btn').forEach((b) => {
+        b.addEventListener('click', () => switchTab(b.getAttribute('data-tab')));
+      });
+
+      ['p-filter-hub', 'p-filter-shipper', 'p-filter-sla'].forEach((id) => {
+        document.getElementById(id).addEventListener('change', renderAll);
+      });
+      document.getElementById('p-btn-reset').addEventListener('click', () => {
+        ['p-filter-hub', 'p-filter-shipper', 'p-filter-sla'].forEach((id) => { document.getElementById(id).value = ''; });
+        renderAll();
+      });
+      document.getElementById('p-scope-cur').addEventListener('click', () => { hubScope = 'current'; renderAll(); });
+      document.getElementById('p-scope-dest').addEventListener('click', () => { hubScope = 'destination'; renderAll(); });
+      document.getElementById('btn-sim-reset').addEventListener('click', () => {
+        model = JSON.parse(JSON.stringify(BASE_SNAPSHOT));
+        toast('Demo state reset to live Google Sheet snapshot.');
+        renderAll();
+      });
+
+      document.getElementById('p-in-shipper').addEventListener('change', (e) => {
+        const s = SHIPPERS[e.target.value];
+        document.getElementById('p-in-preview').textContent = `${s.name} — ${s.addr}`;
+      });
+
+      document.getElementById('p-form-input').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const addr = document.getElementById('p-in-addr').value.trim();
+        if (addr.length < 5) {
+          toast('Destination address must be at least 5 characters.');
+          return;
+        }
+        const id = 'ORD-261118-' + Math.floor(1000 + Math.random() * 9000);
+        const resi = 'RS-' + Math.floor(10000000 + Math.random() * 90000000);
+        model.totalOrders += 1;
+        model.activeQueue.unshift({
+          id,
+          resi,
+          shp: document.getElementById('p-in-shipper').value,
+          status: 'Pending Pickup',
+          cur: document.getElementById('p-in-cur').value,
+          dest: document.getElementById('p-in-dest').value,
+          aging: null,
+          sla: 'Not Inbounded',
+          rts: 0
+        });
+        document.getElementById('p-in-addr').value = '';
+        toast(`Simulated order ${id} (${resi}) added to Pending Pickup queue.`);
+        renderAll();
+      });
+
+      document.getElementById('p-btn-pickup').addEventListener('click', () => {
+        const ids = [...document.querySelectorAll('.p-cb-pickup:checked')].map((c) => c.value);
+        if (!ids.length) return toast('Select at least one Pending Pickup order.');
+        model.activeQueue.forEach((o) => {
+          if (ids.includes(o.id)) { o.status = 'Transit'; o.aging = 0; o.sla = 'Under SLA'; }
+        });
+        toast(`Confirmed pickup for ${ids.length} order(s) -> Transit.`);
+        renderAll();
+      });
+
+      document.getElementById('p-btn-sort-transfer').addEventListener('click', () => {
+        const ids = [...document.querySelectorAll('.p-cb-sort:checked')].map((c) => c.value);
+        if (!ids.length) return toast('Select at least one Transit order.');
+        model.activeQueue.forEach((o) => { if (ids.includes(o.id)) o.cur = o.dest; });
+        toast(`Transferred ${ids.length} order(s) to destination hub.`);
+        renderAll();
+      });
+
+      document.getElementById('p-btn-sort-dispatch').addEventListener('click', () => {
+        const ids = [...document.querySelectorAll('.p-cb-sort:checked')].map((c) => c.value);
+        if (!ids.length) return toast('Select at least one Transit order.');
+        model.activeQueue.forEach((o) => { if (ids.includes(o.id)) o.status = 'On Shipment'; });
+        toast(`Dispatched ${ids.length} order(s) -> On Shipment.`);
+        renderAll();
+      });
+
+      document.getElementById('p-btn-sort-flag').addEventListener('click', () => {
+        const ids = [...document.querySelectorAll('.p-cb-sort:checked')].map((c) => c.value);
+        if (!ids.length) return toast('Select at least one Transit order.');
+        model.activeQueue.forEach((o) => { if (ids.includes(o.id)) o.rts = 1; });
+        model.returnFlagged += ids.length;
+        toast(`Flagged ${ids.length} order(s) with return_flag = 1.`);
+        renderAll();
+      });
+
+      document.getElementById('p-btn-deliv-done').addEventListener('click', () => {
+        const ids = [...document.querySelectorAll('.p-cb-deliv:checked')].map((c) => c.value);
+        if (!ids.length) return toast('Select at least one Delivery order.');
+        model.activeQueue = model.activeQueue.filter((o) => !ids.includes(o.id));
+        model.delivered += ids.length;
+        toast(`Marked ${ids.length} order(s) as Delivered.`);
+        renderAll();
+      });
+
+      document.getElementById('p-btn-deliv-rts').addEventListener('click', () => {
+        const ids = [...document.querySelectorAll('.p-cb-deliv:checked')].map((c) => c.value);
+        if (!ids.length) return toast('Select at least one Delivery order.');
+        model.activeQueue.forEach((o) => { if (ids.includes(o.id)) { o.status = 'Transit'; o.rts = 1; } });
+        toast(`Returned ${ids.length} order(s) to hub (Transit + RTS).`);
+        renderAll();
+      });
+
+      document.getElementById('p-btn-deliv-ret').addEventListener('click', () => {
+        const ids = [...document.querySelectorAll('.p-cb-deliv:checked')].map((c) => c.value);
+        if (!ids.length) return toast('Select at least one Delivery order.');
+        model.activeQueue = model.activeQueue.filter((o) => !ids.includes(o.id));
+        model.returned += ids.length;
+        toast(`Marked ${ids.length} order(s) as Returned.`);
+        renderAll();
+      });
+
+      renderAll();
+    })();
+  </script>
+</body>
+</html>

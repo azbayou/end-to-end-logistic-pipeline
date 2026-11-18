@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Logistic Performance Xpress — Operations & Dashboard</title>
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand">
+        <span class="brand-mark">LPX</span>
+        <div>
+          <h1 class="brand-title">Logistic Performance Xpress</h1>
+          <p class="brand-sub">Live Operations &amp; SLA Analytics Console</p>
+        </div>
+      </div>
+
+      <nav class="nav-tabs" aria-label="Primary navigation">
+        <button id="nav-dashboard" type="button" class="nav-btn" data-view="dashboard">
+          Dashboard
+        </button>
+        <button id="nav-input" type="button" class="nav-btn" data-view="input">
+          Input Data
+        </button>
+        <button id="nav-pickup" type="button" class="nav-btn" data-view="pickup">
+          Pickup <span id="nav-count-pickup" class="nav-count">0</span>
+        </button>
+        <button id="nav-sort" type="button" class="nav-btn" data-view="sort">
+          Sort <span id="nav-count-sort" class="nav-count">0</span>
+        </button>
+        <button id="nav-delivery" type="button" class="nav-btn" data-view="delivery">
+          Delivery <span id="nav-count-delivery" class="nav-count">0</span>
+        </button>
+      </nav>
+
+      <div class="header-actions">
+        <label style="color:#cbd5e1;display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
+          <input id="auto-refresh-toggle" type="checkbox" />
+          Auto-Refresh
+        </label>
+        <button id="btn-refresh-all" type="button" class="btn btn-ghost-dark">
+          Refresh Data
+        </button>
+        <button id="btn-sync-report" type="button" class="btn btn-primary">
+          Sync order_report
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-container">
+    <div id="global-error-banner" class="form-error hidden" role="alert"></div>
+
+    <!-- ==================== VIEW: DASHBOARD ==================== -->
+    <section id="view-dashboard" class="view-section hidden">
+      <div class="page-heading">
+        <div>
+          <h2>Operations &amp; SLA Dashboard</h2>
+          <p>Live metrics aggregated from <span class="mono">db_orders</span> &amp; <span class="mono">db_shippers</span> (SLA threshold: &lt; 8 days Under SLA)</p>
+        </div>
+        <div class="card-sub" id="dashboard-meta-readout">Loading live data...</div>
+      </div>
+
+      <!-- 5 KPI Cards -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Total Orders</div>
+          <div id="kpi-total-orders" class="kpi-value">-</div>
+          <div id="kpi-total-orders-sub" class="kpi-meta">Filtered shipments</div>
+        </div>
+        <div class="kpi-card kpi-success">
+          <div class="kpi-label">Delivered Rate</div>
+          <div id="kpi-delivered-rate" class="kpi-value">-</div>
+          <div id="kpi-delivered-rate-sub" class="kpi-meta">Delivered / Closed</div>
+        </div>
+        <div class="kpi-card kpi-indigo">
+          <div class="kpi-label">Active Shipments</div>
+          <div id="kpi-active-shipments" class="kpi-value">-</div>
+          <div id="kpi-active-shipments-sub" class="kpi-meta">Pending + Transit + On Shipment</div>
+        </div>
+        <div class="kpi-card kpi-danger">
+          <div class="kpi-label">Return Rate</div>
+          <div id="kpi-return-rate" class="kpi-value">-</div>
+          <div id="kpi-return-rate-sub" class="kpi-meta">Return flagged orders</div>
+        </div>
+        <div class="kpi-card kpi-warning">
+          <div class="kpi-label">Average Delivery Time</div>
+          <div id="kpi-avg-delivery-time" class="kpi-value">-</div>
+          <div id="kpi-avg-delivery-time-sub" class="kpi-meta">Inbounded orders (days)</div>
+        </div>
+      </div>
+
+      <!-- Multi-dimensional Filters -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Multi-Dimensional Filters</h3>
+          <button id="btn-reset-filters" type="button" class="btn btn-sm">Reset Filters</button>
+        </div>
+        <div class="filter-grid">
+          <div class="form-group">
+            <label for="filter-date-from">Date From</label>
+            <input id="filter-date-from" type="date" />
+          </div>
+          <div class="form-group">
+            <label for="filter-date-to">Date To</label>
+            <input id="filter-date-to" type="date" />
+          </div>
+          <div class="form-group">
+            <label for="filter-hub">Hub (Current or Dest)</label>
+            <select id="filter-hub">
+              <option value="">All Hubs</option>
+              <option value="HUB-JKT">HUB-JKT — Jakarta Central Hub</option>
+              <option value="HUB-BDG">HUB-BDG — Bandung West Hub</option>
+              <option value="HUB-SUB">HUB-SUB — Surabaya East Hub</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="filter-status">Status</label>
+            <select id="filter-status">
+              <option value="">All Statuses</option>
+              <option value="Pending Pickup">Pending Pickup</option>
+              <option value="Transit">Transit</option>
+              <option value="On Shipment">On Shipment</option>
+              <option value="Delivered">Delivered</option>
+              <option value="Returned">Returned</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="filter-shipper">Shipper</label>
+            <select id="filter-shipper">
+              <option value="">All Shippers</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="filter-sla">SLA Type</label>
+            <select id="filter-sla">
+              <option value="">All SLA Types</option>
+              <option value="Under SLA">Under SLA (&lt; 8 days)</option>
+              <option value="Over SLA">Over SLA (&gt;= 8 days)</option>
+              <option value="Not Inbounded">Not Inbounded</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="filter-search">Search Order ID / Resi</label>
+            <input id="filter-search" type="search" placeholder="ORD-... or RS-..." />
+          </div>
+        </div>
+      </div>
+
+      <!-- 7 Prototype Charts -->
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div class="card-header">
+            <h3 class="card-title">Order Status Breakdown</h3>
+          </div>
+          <div id="chart-status-breakdown" class="chart-box"></div>
+        </div>
+
+        <div class="chart-card">
+          <div class="card-header">
+            <h3 class="card-title">Volume per Hub</h3>
+            <div class="seg-group" role="group" aria-label="Hub volume scope">
+              <button id="btn-hub-scope-current" type="button" class="seg-btn active" data-scope="current">Current</button>
+              <button id="btn-hub-scope-dest" type="button" class="seg-btn" data-scope="destination">Destination</button>
+            </div>
+          </div>
+          <div id="chart-volume-hub" class="chart-box"></div>
+        </div>
+
+        <div class="chart-card">
+          <div class="card-header">
+            <h3 class="card-title">Return Rate by Destination Hub</h3>
+          </div>
+          <div id="chart-return-hub" class="chart-box"></div>
+        </div>
+
+        <div class="chart-card">
+          <div class="card-header">
+            <h3 class="card-title">Shipper Breakdown</h3>
+          </div>
+          <div id="chart-shipper-breakdown" class="chart-box"></div>
+        </div>
+
+        <div class="chart-card">
+          <div class="card-header">
+            <h3 class="card-title">Volume per Shipper</h3>
+          </div>
+          <div id="chart-volume-shipper" class="chart-box"></div>
+        </div>
+
+        <div class="chart-card">
+          <div class="card-header">
+            <h3 class="card-title">Return Rate by Shipper</h3>
+          </div>
+          <div id="chart-return-shipper" class="chart-box"></div>
+        </div>
+
+        <div class="chart-card wide">
+          <div class="card-header">
+            <h3 class="card-title">SLA by Hub</h3>
+            <span class="card-sub">Not Inbounded vs Under SLA (&lt; 8d) vs Over SLA (&gt;= 8d)</span>
+          </div>
+          <div id="chart-sla-hub" class="chart-box"></div>
+        </div>
+      </div>
+
+      <!-- High Aging Monitoring Table -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title">High Aging Monitoring</h3>
+            <span class="card-sub">Active inbounded shipments sorted by descending aging days — click action to triage in Sort or Delivery</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="high-aging-table">
+            <thead>
+              <tr>
+                <th>Order ID</th>
+                <th>Resi</th>
+                <th>Shipper</th>
+                <th>Status</th>
+                <th>Current Hub</th>
+                <th>Dest Hub</th>
+                <th>Inbound Date</th>
+                <th>Aging (Days)</th>
+                <th>SLA</th>
+                <th>Quick Action</th>
+              </tr>
+            </thead>
+            <tbody id="high-aging-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Recent Operational Audit Logs -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title">Recent Operational Logs (<span class="mono">op_logs</span>)</h3>
+            <span class="card-sub">Latest actions recorded across Input Data, Pickup, Sort, Delivery &amp; Report Sync</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="op-logs-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Order ID</th>
+                <th>Action</th>
+                <th>Transition</th>
+                <th>Hub</th>
+                <th>Courier</th>
+                <th>Notes</th>
+                <th>Operator</th>
+              </tr>
+            </thead>
+            <tbody id="op-logs-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== VIEW: INPUT DATA ==================== -->
+    <section id="view-input" class="view-section hidden">
+      <div class="page-heading">
+        <div>
+          <h2>Input Data — Create New Shipment Order</h2>
+          <p>Creates a <span class="mono">Pending Pickup</span> order in <span class="mono">db_orders</span> (strict A:J BigQuery schema) with auto-generated Order ID &amp; Resi.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div id="input-form-error" class="form-error hidden" role="alert"></div>
+        <form id="form-create-order" novalidate>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="input-shipper-id">Shipper *</label>
+              <select id="input-shipper-id" required>
+                <option value="">-- Select Shipper --</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Pickup Address Preview</label>
+              <div id="input-pickup-preview" class="preview-box">Select a shipper to preview pickup address.</div>
+            </div>
+
+            <div class="form-group">
+              <label for="input-current-hub">Origin / Current Hub *</label>
+              <select id="input-current-hub" required>
+                <option value="">-- Select Origin Hub --</option>
+                <option value="HUB-JKT">HUB-JKT — Jakarta Central Hub</option>
+                <option value="HUB-BDG">HUB-BDG — Bandung West Hub</option>
+                <option value="HUB-SUB">HUB-SUB — Surabaya East Hub</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="input-destination-hub">Destination Hub *</label>
+              <select id="input-destination-hub" required>
+                <option value="">-- Select Destination Hub --</option>
+                <option value="HUB-JKT">HUB-JKT — Jakarta Central Hub</option>
+                <option value="HUB-BDG">HUB-BDG — Bandung West Hub</option>
+                <option value="HUB-SUB">HUB-SUB — Surabaya East Hub</option>
+              </select>
+            </div>
+
+            <div class="form-group full-span">
+              <label for="input-destination-address">Destination Address * (min 5 characters)</label>
+              <textarea id="input-destination-address" rows="2" placeholder="Enter complete recipient street address..." required></textarea>
+            </div>
+
+            <div class="form-group">
+              <label for="input-courier">Assigned Courier / Dispatcher (logged to op_logs)</label>
+              <input id="input-courier" type="text" placeholder="Optional courier name" />
+            </div>
+
+            <div class="form-group">
+              <label for="input-notes">Operational Notes (logged to op_logs)</label>
+              <input id="input-notes" type="text" placeholder="Optional parcel handling notes" />
+            </div>
+
+            <div class="form-group full-span" style="flex-direction:row;justify-content:flex-end;gap:10px;">
+              <button id="btn-submit-order" type="submit" class="btn btn-primary">Create Order</button>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Recent Orders</h3>
+          <span class="card-sub">Most recently added / updated orders</span>
+        </div>
+        <div class="table-wrap">
+          <table id="input-recent-table">
+            <thead>
+              <tr>
+                <th>Order ID</th>
+                <th>Resi</th>
+                <th>Shipper</th>
+                <th>Status</th>
+                <th>Current Hub</th>
+                <th>Destination Hub</th>
+                <th>Destination Address</th>
+              </tr>
+            </thead>
+            <tbody id="input-recent-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== VIEW: PICKUP ==================== -->
+    <section id="view-pickup" class="view-section hidden">
+      <div class="page-heading">
+        <div>
+          <h2>Pickup Operations — Pending Pickup Queue</h2>
+          <p>Scan or select <span class="mono">Pending Pickup</span> orders to confirm inbound handoff (<span class="mono">Pending Pickup &rarr; Transit</span>).</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="ops-toolbar">
+          <div class="form-group">
+            <label for="pickup-scan-input">Scan / Search Order ID or Resi</label>
+            <input id="pickup-scan-input" type="search" placeholder="Scan ORD-... or RS-... (Enter to confirm)" />
+          </div>
+          <div class="form-group">
+            <label for="pickup-hub-filter">Filter Origin Hub</label>
+            <select id="pickup-hub-filter">
+              <option value="">All Hubs</option>
+              <option value="HUB-JKT">HUB-JKT — Jakarta Central Hub</option>
+              <option value="HUB-BDG">HUB-BDG — Bandung West Hub</option>
+              <option value="HUB-SUB">HUB-SUB — Surabaya East Hub</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="pickup-confirm-hub">Confirm Inbound Hub</label>
+            <select id="pickup-confirm-hub">
+              <option value="">Keep Order Origin Hub</option>
+              <option value="HUB-JKT">HUB-JKT — Jakarta Central Hub</option>
+              <option value="HUB-BDG">HUB-BDG — Bandung West Hub</option>
+              <option value="HUB-SUB">HUB-SUB — Surabaya East Hub</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="pickup-date">Inbound Date</label>
+            <input id="pickup-date" type="date" />
+          </div>
+          <div class="form-group">
+            <label for="pickup-courier">Pickup Courier</label>
+            <input id="pickup-courier" type="text" placeholder="Driver / courier name" />
+          </div>
+          <div class="form-group">
+            <label for="pickup-notes">Pickup Notes</label>
+            <input id="pickup-notes" type="text" placeholder="Optional pickup notes" />
+          </div>
+        </div>
+        <div class="ops-actions-row">
+          <span id="pickup-selection-count" class="card-sub">0 selected</span>
+          <div class="btn-group">
+            <button id="btn-confirm-pickup-batch" type="button" class="btn btn-primary">
+              Confirm Pickup &rarr; Transit
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="table-wrap">
+          <table id="pickup-table">
+            <thead>
+              <tr>
+                <th style="width:36px;"><input id="pickup-select-all" type="checkbox" aria-label="Select all pickup orders" /></th>
+                <th>Order ID</th>
+                <th>Resi</th>
+                <th>Shipper</th>
+                <th>Pickup Address</th>
+                <th>Origin Hub</th>
+                <th>Dest Hub</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="pickup-tbody"></tbody>
+          </table>
+        </div>
+        <div id="pickup-empty" class="empty-state hidden">No orders match the current Pickup queue filter.</div>
+      </div>
+    </section>
+
+    <!-- ==================== VIEW: SORT ==================== -->
+    <section id="view-sort" class="view-section hidden">
+      <div class="page-heading">
+        <div>
+          <h2>Sortation &amp; Hub Routing — Transit Queue</h2>
+          <p>Route <span class="mono">Transit</span> shipments across hubs, dispatch to last-mile (<span class="mono">On Shipment</span>), or flag RTS exceptions.</p>
+        </div>
+      </div>
+
+      <div class="sub-tabs" role="tablist">
+        <button id="sort-tab-ready" type="button" class="sub-tab-btn active" data-sort-tab="ready">
+          Ready for Last-Mile <span id="sort-count-ready" class="badge badge-transit">0</span>
+        </button>
+        <button id="sort-tab-linehaul" type="button" class="sub-tab-btn" data-sort-tab="linehaul">
+          Inter-Hub Linehaul <span id="sort-count-linehaul" class="badge badge-shipment">0</span>
+        </button>
+        <button id="sort-tab-flagged" type="button" class="sub-tab-btn" data-sort-tab="flagged">
+          Flagged / RTS <span id="sort-count-flagged" class="badge badge-rts">0</span>
+        </button>
+      </div>
+
+      <div class="card">
+        <div class="ops-toolbar">
+          <div class="form-group">
+            <label for="sort-scan-input">Scan / Search Order ID or Resi</label>
+            <input id="sort-scan-input" type="search" placeholder="ORD-... or RS-..." />
+          </div>
+          <div class="form-group">
+            <label for="sort-hub-filter">Filter Current Hub</label>
+            <select id="sort-hub-filter">
+              <option value="">All Hubs</option>
+              <option value="HUB-JKT">HUB-JKT — Jakarta Central Hub</option>
+              <option value="HUB-BDG">HUB-BDG — Bandung West Hub</option>
+              <option value="HUB-SUB">HUB-SUB — Surabaya East Hub</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="sort-target-hub">Transfer Target Hub</label>
+            <select id="sort-target-hub">
+              <option value="">-- Select Target Hub --</option>
+              <option value="HUB-JKT">HUB-JKT — Jakarta Central Hub</option>
+              <option value="HUB-BDG">HUB-BDG — Bandung West Hub</option>
+              <option value="HUB-SUB">HUB-SUB — Surabaya East Hub</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="sort-courier">Linehaul / Dispatch Courier</label>
+            <input id="sort-courier" type="text" placeholder="Truck / courier name" />
+          </div>
+          <div class="form-group">
+            <label for="sort-notes">Sort Notes</label>
+            <input id="sort-notes" type="text" placeholder="Optional routing or exception notes" />
+          </div>
+        </div>
+
+        <div class="ops-actions-row">
+          <span id="sort-selection-count" class="card-sub">0 selected</span>
+          <div class="btn-group">
+            <button id="btn-sort-transfer" type="button" class="btn">Transfer Hub</button>
+            <button id="btn-sort-dispatch" type="button" class="btn btn-primary">Dispatch to Delivery</button>
+            <button id="btn-sort-flag-return" type="button" class="btn btn-warning">Flag Return (RTS)</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="table-wrap">
+          <table id="sort-table">
+            <thead>
+              <tr>
+                <th style="width:36px;"><input id="sort-select-all" type="checkbox" aria-label="Select all sort orders" /></th>
+                <th>Order ID</th>
+                <th>Resi</th>
+                <th>Shipper</th>
+                <th>Current Hub</th>
+                <th>Dest Hub</th>
+                <th>Inbound Date</th>
+                <th>Aging / SLA</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="sort-tbody"></tbody>
+          </table>
+        </div>
+        <div id="sort-empty" class="empty-state hidden">No orders match the current Sort queue filter.</div>
+      </div>
+    </section>
+
+    <!-- ==================== VIEW: DELIVERY ==================== -->
+    <section id="view-delivery" class="view-section hidden">
+      <div class="page-heading">
+        <div>
+          <h2>Last-Mile Delivery &amp; Return Resolution</h2>
+          <p>Manage <span class="mono">On Shipment</span> and flagged RTS <span class="mono">Transit</span> parcels: Mark Delivered, Failed &rarr; Return to Hub, or Mark Returned.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="ops-toolbar">
+          <div class="form-group">
+            <label for="delivery-scan-input">Scan / Search Order ID or Resi</label>
+            <input id="delivery-scan-input" type="search" placeholder="ORD-... or RS-..." />
+          </div>
+          <div class="form-group">
+            <label for="delivery-hub-filter">Filter Hub</label>
+            <select id="delivery-hub-filter">
+              <option value="">All Hubs</option>
+              <option value="HUB-JKT">HUB-JKT — Jakarta Central Hub</option>
+              <option value="HUB-BDG">HUB-BDG — Bandung West Hub</option>
+              <option value="HUB-SUB">HUB-SUB — Surabaya East Hub</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="delivery-date">End Date (Delivered / Returned)</label>
+            <input id="delivery-date" type="date" />
+          </div>
+          <div class="form-group">
+            <label for="delivery-courier">Last-Mile Courier</label>
+            <input id="delivery-courier" type="text" placeholder="Courier name" />
+          </div>
+          <div class="form-group">
+            <label for="delivery-notes">POD / RTS Notes</label>
+            <input id="delivery-notes" type="text" placeholder="Receiver or return reason" />
+          </div>
+        </div>
+
+        <div class="ops-actions-row">
+          <span id="delivery-selection-count" class="card-sub">0 selected</span>
+          <div class="btn-group">
+            <button id="btn-delivery-delivered" type="button" class="btn btn-success">Mark Delivered</button>
+            <button id="btn-delivery-failed-rts" type="button" class="btn btn-warning">Failed &rarr; Return to Hub</button>
+            <button id="btn-delivery-returned" type="button" class="btn btn-danger">Mark Returned</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="table-wrap">
+          <table id="delivery-table">
+            <thead>
+              <tr>
+                <th style="width:36px;"><input id="delivery-select-all" type="checkbox" aria-label="Select all delivery orders" /></th>
+                <th>Order ID</th>
+                <th>Resi</th>
+                <th>Shipper</th>
+                <th>Current Hub</th>
+                <th>Dest Address</th>
+                <th>Aging / SLA</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="delivery-tbody"></tbody>
+          </table>
+        </div>
+        <div id="delivery-empty" class="empty-state hidden">No orders match the current Delivery queue filter.</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Cross-Hub Confirmation Modal -->
+  <div id="confirm-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+    <div class="modal-card">
+      <h3 id="confirm-modal-title" class="modal-title">Cross-Hub Dispatch Confirmation</h3>
+      <div id="confirm-modal-body" class="modal-body">
+        Some selected orders have a current hub that differs from their destination hub.
+      </div>
+      <div class="modal-actions">
+        <button id="btn-confirm-modal-cancel" type="button" class="btn">Cancel</button>
+        <button id="btn-confirm-modal-proceed" type="button" class="btn btn-warning">Proceed Dispatch Anyway</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" aria-live="polite"></div>
+
+  <script>
+    window.__APP_INIT__ = {
+      initialView: <?!= JSON.stringify(initialView || 'dashboard') ?>,
+      initialSearch: <?!= JSON.stringify(initialSearch || '') ?>
+    };
+  </script>
+  <?!= include('Scripts'); ?>
+</body>
+</html>
