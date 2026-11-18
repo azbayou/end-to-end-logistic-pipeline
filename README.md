@@ -44,16 +44,17 @@ An end-to-end **Google Apps Script (GAS) Web Application** (`src/`) backed by Go
    npm install -g @google/clasp
    clasp login
    ```
-4. Create a **brand-new Standalone Apps Script project** (do not overwrite `.clasp.json` with an old Script ID), restore our manifest (`src/appsscript.json`), and push `src/`:
+4. Create a **brand-new Standalone Apps Script project** (do not overwrite `.clasp.json` with an old Script ID), restore our manifest (`src/appsscript.json`), verify all 9 files in `src/` are tracked, and push:
    ```bash
    clasp create --type standalone --title "Logistic Performance Xpress" --rootDir src
    git checkout -- src/appsscript.json
+   clasp status
    clasp push -f
    ```
-   *(Alternatively, if you already created the blank standalone project in `https://script.google.com`, copy `.clasp.json.example` to `.clasp.json`, paste the **new** Script ID, and run `clasp push`.)*
+   *(Alternatively, if you already created the blank standalone project in `https://script.google.com`, copy `.clasp.json.example` to `.clasp.json`, paste the **new** Script ID, and run `clasp status && clasp push -f`.)*
 5. Open the Apps Script project in browser and deploy the Web App:
    ```bash
-   clasp open
+   clasp open-script
    ```
    Then click **Deploy -> New deployment -> Web app**:
    - **Execute as**: `Me`

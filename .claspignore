@@ -1,5 +1,7 @@
-**/**
-!src/**
-!src/*.gs
-!src/*.html
-!src/appsscript.json
+node_modules/**
+test/**
+preview/**
+.git/**
+*.md
+package.json
+package-lock.json
